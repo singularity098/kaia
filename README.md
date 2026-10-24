@@ -130,7 +130,7 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   the same menu and in Settings.
 * **Highlight colour**: *Settings → Highlight colour* (blue by default).
 * **Pad colours**: *Settings → Pad colours* tints the pads with a soft gradient that runs from A01
-  to A16 (blue, cyan, green, ..., spectrum, ocean, dusk, forest), independently of the highlight
+  to A16 (blue, cyan, green, orange, red, pink or purple), independently of the highlight
   colour. *Plain* (the default) keeps them neutral.
 * **Sample loops**: off by default (*Settings → Playback*), so every hit plays its sample once.
   Some samples carry loop points; with *Play sample loops* on, pads in note-on mode repeat them
