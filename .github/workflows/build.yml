@@ -1,0 +1,84 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    # Ubuntu 22.04 + the portable option -> binaries that load on glibc 2.35 and newer
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libjack-jackd2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
+            xvfb python3-numpy
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DKAIA_PORTABLE_LINUX=ON -DKAIA_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Unit tests
+        run: ./build/KaiaTests_artefacts/Release/KaiaTests
+
+      - name: Package
+        run: |
+          out=build/Kaia_artefacts/Release
+          pkg=Kaia-linux-x86_64
+          mkdir -p $pkg/docs
+          cp -r $out/VST3 $out/LV2 $out/CLAP $out/Standalone $pkg/
+          strip --strip-unneeded $pkg/VST3/Kaia.vst3/Contents/x86_64-linux/Kaia.so $pkg/LV2/Kaia.lv2/libKaia.so $pkg/CLAP/Kaia.clap
+          strip $pkg/Standalone/Kaia
+          cp packaging/install.sh README.md LICENSE THIRD_PARTY.md $pkg/
+          cp docs/editor.png $pkg/docs/
+          python3 tools/make_demo_pack.py "$pkg/Kaia Demo Kit.xpn"
+          tar czf $pkg.tar.gz $pkg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kaia-linux-x86_64
+          path: Kaia-linux-x86_64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DKAIA_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Unit tests
+        run: .\build\KaiaTests_artefacts\Release\KaiaTests.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kaia-windows-x64
+          path: |
+            build/Kaia_artefacts/Release/VST3
+            build/Kaia_artefacts/Release/CLAP
+            build/Kaia_artefacts/Release/Standalone
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DKAIA_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Unit tests
+        run: ./build/KaiaTests_artefacts/Release/KaiaTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kaia-macos
+          path: |
+            build/Kaia_artefacts/Release/VST3
+            build/Kaia_artefacts/Release/AU
+            build/Kaia_artefacts/Release/CLAP
+            build/Kaia_artefacts/Release/Standalone
