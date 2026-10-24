@@ -3,23 +3,10 @@
 namespace kaia
 {
 
-std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples)
+namespace
 {
-    auto rt = std::make_unique<KitRuntime>();
-    rt->gain = (float) dbToGain (kit.volumeDb);
-    rt->tuneSemis = kit.tuneSemis;
-    rt->pitchBendRange = kit.pitchBendRange;
-    rt->pads.resize (kit.pads.size());
-
-    bool anySolo = false;
-    for (auto& p : kit.pads)
-        anySolo = anySolo || (p.solo && p.hasAnySample());
-
-    for (size_t i = 0; i < kit.pads.size(); ++i)
+    void buildPad (const Pad& src, PadRT& dst, const SampleMap* samples, bool audible, std::vector<SampleDataPtr>& keepAlive)
     {
-        auto& src = kit.pads[i];
-        auto& dst = rt->pads[i];
-
         dst.layerMode  = src.layerMode;
         dst.trigger    = src.trigger;
         dst.gain       = (float) dbToGain (src.volumeDb);
@@ -46,7 +33,7 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
         dst.mono      = src.mono;
         dst.polyphony = src.polyphony;
         dst.output    = juce::jlimit (0, kNumAuxOutputs, src.output);
-        dst.audible   = ! src.mute && (! anySolo || src.solo);
+        dst.audible   = audible;
 
         dst.keygroup = src.isKeygroup();
         dst.keyTrack = src.keyTrack;
@@ -54,7 +41,7 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
 
         dst.numLayers = 0;
         if (samples == nullptr)
-            continue;
+            return;
 
         for (auto& layer : src.layers)
         {
@@ -68,8 +55,8 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
                 continue;
 
             auto* sd = it->second.get();
-            if (std::find (rt->keepAlive.begin(), rt->keepAlive.end(), it->second) == rt->keepAlive.end())
-                rt->keepAlive.push_back (it->second);
+            if (std::find (keepAlive.begin(), keepAlive.end(), it->second) == keepAlive.end())
+                keepAlive.push_back (it->second);
 
             auto& l = dst.layers[(size_t) dst.numLayers++];
             l.sample    = sd;
@@ -111,6 +98,39 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
 
             l.rootNote = layer.rootNote >= 0 ? layer.rootNote : (sd->rootNote >= 0 ? sd->rootNote : src.rootNote);
         }
+    }
+}
+
+std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples, const TriggerMap* triggers, const PreviewSound* preview)
+{
+    auto rt = std::make_unique<KitRuntime>();
+    rt->gain = (float) dbToGain (kit.volumeDb);
+    rt->tuneSemis = kit.tuneSemis;
+    rt->pitchBendRange = kit.pitchBendRange;
+    rt->pads.resize (kit.pads.size());
+    rt->padNote.fill (-1);
+
+    bool anySolo = false;
+    for (auto& p : kit.pads)
+        anySolo = anySolo || (p.solo && p.hasAnySample());
+
+    bool useTriggerMap = triggers != nullptr && ! triggers->isDefault() && ! kit.isKeygroupProgram;
+    bool hiHatChoke = useTriggerMap && triggers->usesModule() && triggers->hiHatChoke;
+
+    for (size_t i = 0; i < kit.pads.size(); ++i)
+    {
+        auto& src = kit.pads[i];
+        auto& dst = rt->pads[i];
+        buildPad (src, dst, samples, ! src.mute && (! anySolo || src.solo), rt->keepAlive);
+
+        if (i < (size_t) kMaxPads)
+            rt->padNote[i] = src.isKeygroup() ? -1 : src.note;
+
+        // With a drum module the hi-hat pads cut each other off, unless the kit already groups them
+        if (hiHatChoke && dst.muteGroup == 0
+             && ((int) i == drumZonePad (DrumZone::HiHatClosed) || (int) i == drumZonePad (DrumZone::HiHatPedal)
+                  || (int) i == drumZonePad (DrumZone::HiHatOpen)))
+            dst.muteGroup = kHiHatChokeGroup;
 
         if (dst.numLayers == 0)
             continue;
@@ -124,6 +144,31 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
         {
             rt->padsForNote[(size_t) src.note].push_back ((int) i);
         }
+    }
+
+    if (useTriggerMap)
+    {
+        auto table = triggers->resolve (kit);
+        for (size_t n = 0; n < 128; ++n)
+            for (auto pad : table[n])
+                if (rt->pads[(size_t) pad].numLayers > 0)
+                    rt->padsForInput[n].push_back (pad);
+    }
+    else
+    {
+        rt->padsForInput = rt->padsForNote;
+    }
+
+    if (preview != nullptr)
+    {
+        // Auditions play once through Main, whatever the pad's own trigger mode and routing
+        auto pad = preview->pad;
+        pad.trigger = TriggerMode::OneShot;
+        pad.noteLow = pad.noteHigh = -1;
+        pad.output = 0;
+        pad.muteGroup = 0;
+        buildPad (pad, rt->preview, &preview->samples, true, rt->keepAlive);
+        rt->previewId = preview->id;
     }
 
     return rt;

@@ -4,7 +4,8 @@ namespace kaia
 {
 
 //==============================================================================
-class PadGrid::PadButton : public juce::Component
+class PadGrid::PadButton : public juce::Component,
+                           public juce::DragAndDropTarget
 {
 public:
     PadButton (PadGrid& g, int slot) : grid (g), slotInBank (slot) {}
@@ -44,8 +45,16 @@ public:
             g.fillRoundedRectangle (r.withTop (r.getBottom() - 3.0f).reduced (8.0f, 0.0f), 1.5f);
         }
 
-        g.setColour (dropTarget ? Colours::good : selected ? Colours::accent : Colours::outline);
-        g.drawRoundedRectangle (r, 6.0f, dropTarget || selected ? 2.0f : 1.0f);
+        bool learning = grid.processor.getMidiLearnPad() == padIndex;
+        if (learning)
+        {
+            auto pulse = 0.5f + 0.5f * std::sin ((float) juce::Time::getMillisecondCounter() * 0.008f);
+            g.setColour (Colours::accent.withAlpha (0.15f + 0.25f * pulse));
+            g.fillRoundedRectangle (r, 6.0f);
+        }
+
+        g.setColour (dropTarget ? Colours::good : (selected || learning) ? Colours::accent : Colours::outline);
+        g.drawRoundedRectangle (r, 6.0f, dropTarget || selected || learning ? 2.0f : 1.0f);
 
         auto inner = r.reduced (8.0f, 6.0f).toNearestInt();
         g.setFont (uiFont (11.5f, true));
@@ -57,12 +66,22 @@ public:
         if (pad != nullptr)
         {
             juce::String noteText;
-            if (pad->isKeygroup())
+            bool mapped = ! grid.processor.getTriggerMap().isDefault() && ! kit.isKeygroupProgram;
+            if (learning)
+                noteText = "LEARN";
+            else if (pad->isKeygroup())
                 noteText = juce::MidiMessage::getMidiNoteName (pad->noteLow, true, true, 3) + "-" + juce::MidiMessage::getMidiNoteName (pad->noteHigh, true, true, 3);
+            else if (mapped)
+            {
+                // Notes from the drum module / MIDI Learn: show the MIDI note number(s)
+                auto notes = grid.processor.getInputNotesForPad (padIndex);
+                if (! notes.empty())
+                    noteText = juce::String (notes.front()) + (notes.size() > 1 ? " +" + juce::String ((int) notes.size() - 1) : juce::String());
+            }
             else if (pad->note >= 0)
                 noteText = juce::MidiMessage::getMidiNoteName (pad->note, true, true, 3);
-            g.setFont (uiFont (11.0f));
-            g.setColour (Colours::textDim);
+            g.setFont (uiFont (11.0f, learning));
+            g.setColour (learning ? Colours::accent : mapped ? Colours::text.withAlpha (0.8f) : Colours::textDim);
             g.drawText (noteText, getLocalBounds().reduced (11, 9).removeFromTop (14), juce::Justification::topRight);
         }
 
@@ -131,6 +150,20 @@ public:
         if (auditionNote >= 0)
             grid.processor.getEngine().auditionNoteOff (auditionNote);
         auditionNote = -1;
+    }
+
+    // Samples and pads dragged from the library. Shift adds a layer instead of replacing.
+    bool isInterestedInDragSource (const SourceDetails& d) override
+    {
+        return grid.isInterestedInDrag && grid.isInterestedInDrag (d.description);
+    }
+    void itemDragEnter (const SourceDetails&) override { grid.setDropHighlight (padIndex); }
+    void itemDragExit (const SourceDetails&) override  { if (grid.dropHighlight == padIndex) grid.setDropHighlight (-1); }
+    void itemDropped (const SourceDetails& d) override
+    {
+        grid.setDropHighlight (-1);
+        if (grid.onDrop)
+            grid.onDrop (padIndex, d.description, juce::ModifierKeys::currentModifiers.isShiftDown());
     }
 
 private:
@@ -256,6 +289,15 @@ void PadGrid::paint (juce::Graphics&) {}
 void PadGrid::timerCallback()
 {
     auto& engine = processor.getEngine();
+
+    // MIDI Learn: the learning pad pulses
+    auto learn = processor.getMidiLearnPad();
+    if (learn != shownLearnPad || learn >= 0)
+    {
+        shownLearnPad = learn;
+        for (auto* p : pads)
+            p->repaint();
+    }
     for (auto* p : pads)
     {
         auto idx = p->padIndex;

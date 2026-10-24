@@ -1,5 +1,6 @@
 // Renders the real plugin editor to PNG files (for documentation and visual checks).
-// Usage: KaiaUiSnapshot <program/pack/folder> <out dir> [pad index]
+// Usage: KaiaUiSnapshot <program/pack/folder> <out dir> [pad index] [library folder]
+// Set KAIA_CONFIG_DIR to keep it away from your own settings.
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -34,6 +35,7 @@ int main (int argc, char** argv)
     juce::File target { juce::String (argv[1]) };
     juce::File outDir { juce::String (argv[2]) };
     int pad = argc > 3 ? juce::String (argv[3]).getIntValue() : 0;
+    juce::File libraryDir { argc > 4 ? juce::String (argv[4]) : juce::String() };
     outDir.createDirectory();
 
     KaiaProcessor processor;
@@ -80,16 +82,55 @@ int main (int argc, char** argv)
     pump (900);
     save (*editor, outDir.getChildFile ("editor.png"));
 
-    // Program browser view
-    if (! processor.getPrograms().empty())
+    auto click = [&editor] (const juce::String& text)
     {
         for (auto* c : editor->getChildren())
             if (auto* b = dynamic_cast<juce::TextButton*> (c))
-                if (b->getButtonText() == "Programs")
+                if (b->getButtonText() == text)
                     b->triggerClick();
         pump (400);
+    };
+
+    // Program browser view
+    if (! processor.getPrograms().empty())
+    {
+        click ("Programs");
         save (*editor, outDir.getChildFile ("browser.png"));
     }
+
+    // Library and settings
+    if (libraryDir.isDirectory())
+    {
+        juce::SharedResourcePointer<LibraryService> library;
+        library->setRoot (libraryDir);
+        for (int i = 0; i < 100 && library->isScanning(); ++i)
+            pump (50);
+        click ("Library");
+        // Open the first pack so the shot shows programs and samples
+        std::function<juce::TreeView* (juce::Component&)> findTree = [&findTree] (juce::Component& c) -> juce::TreeView*
+        {
+            if (auto* t = dynamic_cast<juce::TreeView*> (&c))
+                if (t->isVisible() && t->getParentComponent()->isVisible())
+                    return t;
+            for (auto* child : c.getChildren())
+                if (auto* t = findTree (*child))
+                    return t;
+            return nullptr;
+        };
+        if (auto* tree = findTree (*editor))
+            if (auto* rootItem = tree->getRootItem())
+                if (auto* heading = rootItem->getSubItem (rootItem->getNumSubItems() - 1))
+                    if (auto* pack = heading->getSubItem (0))
+                    {
+                        pack->setOpen (true);
+                        for (int i = 0; i < pack->getNumSubItems(); ++i)
+                            pack->getSubItem (i)->setOpen (true);
+                    }
+        pump (300);
+        save (*editor, outDir.getChildFile ("library.png"));
+    }
+    click ("Settings");
+    save (*editor, outDir.getChildFile ("settings.png"));
 
     running = false;
     audio.join();

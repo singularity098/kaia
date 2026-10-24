@@ -7,25 +7,38 @@ namespace kaia
 
 namespace Colours
 {
-    const juce::Colour background   { 0xff15171b };
-    const juce::Colour panel        { 0xff1d2026 };
-    const juce::Colour panelRaised  { 0xff262a31 };
-    const juce::Colour outline      { 0xff31353d };
-    const juce::Colour text         { 0xffe8e6e1 };
-    const juce::Colour textDim      { 0xff8d9099 };
-    const juce::Colour accent       { 0xffff7a3d };   // warm orange
-    const juce::Colour accentDim    { 0xff8a4526 };
+    const juce::Colour background   { 0xff0a0b0d };   // near black
+    const juce::Colour panel        { 0xff111316 };
+    const juce::Colour panelRaised  { 0xff1a1d21 };
+    const juce::Colour outline      { 0xff272a30 };
+    const juce::Colour text         { 0xffe6e7ea };
+    const juce::Colour textDim      { 0xff858a94 };
     const juce::Colour good         { 0xff58c49a };
     const juce::Colour warning      { 0xffe8b04a };
     const juce::Colour error        { 0xffe8625a };
-    const juce::Colour padEmpty     { 0xff23262c };
-    const juce::Colour padLoaded    { 0xff2d3139 };
+    const juce::Colour padEmpty     { 0xff131518 };
+    const juce::Colour padLoaded    { 0xff1c1f24 };
+
+    // The highlight colour is a user setting (message thread only)
+    inline juce::Colour accent      { 0xff3d8bff };   // blue
+    inline juce::Colour accentDim   { 0xff1f4580 };
 }
+
+struct AccentOption
+{
+    const char* name;
+    juce::uint32 argb;
+};
+
+const std::vector<AccentOption>& accentOptions();     // the first one is the default
+void setAccentColour (juce::Colour c);
+juce::Colour savedAccentColour();                     // from the settings file
 
 class KaiaLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
     KaiaLookAndFeel();
+    void applyColours();          // call after the accent colour changed
 
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height, float sliderPos,
                            float startAngle, float endAngle, juce::Slider&) override;

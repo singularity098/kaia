@@ -50,12 +50,15 @@ endif()
 # ---------------------------------------------------------------------------
 set(KAIA_CORE_SOURCES
     Source/Model/Kit.cpp
+    Source/Model/TriggerMap.cpp
+    Source/Model/UserFiles.cpp
     Source/Formats/ZipReader.cpp
     Source/Formats/SampleSource.cpp
     Source/Formats/SndDecoder.cpp
     Source/Formats/XpmParser.cpp
     Source/Formats/PgmParser.cpp
     Source/Formats/KitLoader.cpp
+    Source/Formats/Library.cpp
     Source/Engine/SincTable.cpp
     Source/Engine/KitRuntime.cpp
     Source/Engine/SamplerEngine.cpp)
@@ -72,6 +75,8 @@ set(KAIA_PLUGIN_SOURCES
     Source/UI/PadGrid.cpp
     Source/UI/PadEditor.cpp
     Source/UI/ProgramBrowser.cpp
+    Source/UI/LibraryBrowser.cpp
+    Source/UI/SettingsPanel.cpp
     Source/UI/PluginEditor.cpp)
 
 set(KAIA_COMMON_DEFS

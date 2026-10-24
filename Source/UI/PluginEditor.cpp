@@ -3,35 +3,26 @@
 namespace kaia
 {
 
-namespace
-{
-    juce::PropertiesFile::Options settingsOptions()
-    {
-        juce::PropertiesFile::Options o;
-        o.applicationName = "Kaia";
-        o.filenameSuffix = "settings";
-        o.folderName = "Kaia";
-        o.osxLibrarySubFolder = "Application Support";
-        o.storageFormat = juce::PropertiesFile::storeAsXML;
-        return o;
-    }
-}
-
 KaiaEditor::KaiaEditor (KaiaProcessor& p)
     : AudioProcessorEditor (p),
       processor (p),
       masterAttachment (p.getParameters(), "master", masterSlider),
       padGrid (p),
       padEditor (p),
-      browser (p)
+      browser (p),
+      library (p),
+      settingsPanel (p)
 {
     setLookAndFeel (&lookAndFeel);
-    settings = std::make_unique<juce::PropertiesFile> (settingsOptions());
 
     openButton.setTooltip ("Open an MPC program (.xpm, .pgm), an expansion (.xpn), a folder, or audio files");
     openButton.onClick = [this] { showOpenMenu(); };
     browseButton.setTooltip ("Show the programs of the open expansion or folder");
-    browseButton.onClick = [this] { setBrowserVisible (! browser.isVisible()); };
+    browseButton.onClick = [this] { togglePanel (Panel::Programs); };
+    libraryButton.setTooltip ("Browse your whole library: presets, expansions, programs, pads and samples");
+    libraryButton.onClick = [this] { togglePanel (Panel::Library); };
+    settingsButton.setTooltip ("Drum module, library folder, highlight colour");
+    settingsButton.onClick = [this] { togglePanel (Panel::Settings); };
     prevButton.setTooltip ("Previous program");
     nextButton.setTooltip ("Next program");
     prevButton.onClick = [this] { processor.stepProgram (-1); };
@@ -43,7 +34,7 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     routingButton.setTooltip ("Route pads to the plugin's aux outputs for multi-track mixing");
     routingButton.onClick = [this] { showRoutingMenu(); };
 
-    for (auto* b : { &openButton, &browseButton, &prevButton, &nextButton, &panicButton, &relinkButton, &routingButton })
+    for (auto* b : { &openButton, &browseButton, &libraryButton, &prevButton, &nextButton, &panicButton, &relinkButton, &routingButton, &settingsButton })
         addAndMakeVisible (b);
 
     kitLabel.setFont (uiFont (19.0f, true));
@@ -75,14 +66,29 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
         padEditor.refresh();
     };
     padGrid.onPadMenu = [this] (int pad, juce::Point<int> pos) { showPadMenu (pad, pos); };
+    padGrid.isInterestedInDrag = [] (const juce::var& d) { return LibraryBrowser::isLibraryDrag (d); };
+    padGrid.onDrop = [this] (int pad, const juce::var& d, bool asLayer)
+    {
+        processor.selectedPad = pad;
+        library.dropOnPad (d, pad, asLayer);
+        padGrid.refresh();
+    };
     addAndMakeVisible (padGrid);
 
     padEditor.onLoadSampleRequest = [this] (int pad) { chooseSamplesForPad (pad, KaiaProcessor::AssignMode::Append, 0); };
     padEditor.onReplaceLayerRequest = [this] (int pad, int layer) { chooseSamplesForPad (pad, KaiaProcessor::AssignMode::ReplaceLayer, layer); };
     addAndMakeVisible (padEditor);
 
-    browser.onClose = [this] { setBrowserVisible (false); };
+    browser.onClose = [this] { showPanel (Panel::PadEditor); };
     addChildComponent (browser);
+    library.onClose = [this] { showPanel (Panel::PadEditor); };
+    library.onChooseFolder = [this] { chooseLibraryFolder(); };
+    addChildComponent (library);
+    settingsPanel.onClose = [this] { showPanel (Panel::PadEditor); };
+    settingsPanel.onChooseLibraryFolder = [this] { chooseLibraryFolder(); };
+    settingsPanel.onAccentChanged = [this] { accentChanged(); };
+    addChildComponent (settingsPanel);
+    settings().addChangeListener (this);
 
     processor.addChangeListener (this);
 
@@ -98,13 +104,30 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
 
 KaiaEditor::~KaiaEditor()
 {
+    processor.cancelMidiLearn();
+    settings().removeChangeListener (this);
     processor.removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
 
 //==============================================================================
-void KaiaEditor::changeListenerCallback (juce::ChangeBroadcaster*)
+void KaiaEditor::changeListenerCallback (juce::ChangeBroadcaster* source)
 {
+    // Settings changed (maybe by another instance): pick up a new highlight colour
+    if (source == &settings())
+    {
+        if (savedAccentColour() != Colours::accent)
+            accentChanged();
+        return;
+    }
+    refreshAll();
+}
+
+void KaiaEditor::accentChanged()
+{
+    setAccentColour (savedAccentColour());
+    lookAndFeel.applyColours();
+    sendLookAndFeelChange();
     refreshAll();
 }
 
@@ -208,6 +231,8 @@ void KaiaEditor::resized()
     h.removeFromLeft (6);
     browseButton.setBounds (h.removeFromLeft (92));
     h.removeFromLeft (6);
+    libraryButton.setBounds (h.removeFromLeft (80));
+    h.removeFromLeft (6);
     prevButton.setBounds (h.removeFromLeft (34));
     h.removeFromLeft (4);
     nextButton.setBounds (h.removeFromLeft (34));
@@ -226,6 +251,8 @@ void KaiaEditor::resized()
     auto f = footerArea.reduced (12, 5);
     routingButton.setBounds (f.removeFromRight (84));
     f.removeFromRight (6);
+    settingsButton.setBounds (f.removeFromRight (84));
+    f.removeFromRight (6);
     if (relinkButton.isVisible())
     {
         relinkButton.setBounds (f.removeFromRight (84));
@@ -242,25 +269,89 @@ void KaiaEditor::resized()
     body.removeFromLeft (14);
     padEditor.setBounds (body);
     browser.setBounds (body);
+    library.setBounds (body);
+    settingsPanel.setBounds (body);
 }
 
 //==============================================================================
-void KaiaEditor::setBrowserVisible (bool visible)
+void KaiaEditor::showPanel (Panel panel)
 {
-    browser.setVisible (visible);
-    padEditor.setVisible (! visible);
-    browseButton.setToggleState (visible, juce::dontSendNotification);
+    currentPanel = panel;
+    padEditor.setVisible (panel == Panel::PadEditor);
+    browser.setVisible (panel == Panel::Programs);
+    library.setVisible (panel == Panel::Library);
+    settingsPanel.setVisible (panel == Panel::Settings);
+    browseButton.setToggleState (panel == Panel::Programs, juce::dontSendNotification);
+    libraryButton.setToggleState (panel == Panel::Library, juce::dontSendNotification);
+    settingsButton.setToggleState (panel == Panel::Settings, juce::dontSendNotification);
+}
+
+void KaiaEditor::chooseLibraryFolder()
+{
+    juce::SharedResourcePointer<LibraryService> service;
+    auto start = service->getRoot().isDirectory() ? service->getRoot() : lastFolder();
+    chooser = std::make_unique<juce::FileChooser> ("Choose your library folder (expansions, program folders, samples)", start);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                          [this] (const juce::FileChooser& fc)
+    {
+        auto dir = fc.getResult();
+        if (! dir.isDirectory())
+            return;
+        juce::SharedResourcePointer<LibraryService> lib;
+        lib->setRoot (dir);
+        showPanel (Panel::Library);
+    });
+}
+
+void KaiaEditor::savePresetDialog()
+{
+    presetDialog = std::make_unique<juce::AlertWindow> ("Save preset",
+                                                        "Saved in " + UserFiles::presetsDirectory().getFullPathName()
+                                                        + ".\nThe preset refers to the samples where they are; nothing in your library is changed.",
+                                                        juce::MessageBoxIconType::NoIcon, this);
+    presetDialog->addTextEditor ("name", processor.getKit().name, "Name");
+    presetDialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    presetDialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    presetDialog->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int result)
+    {
+        auto name = presetDialog != nullptr ? presetDialog->getTextEditorContents ("name").trim() : juce::String();
+        presetDialog.reset();
+        if (result != 1 || name.isEmpty())
+            return;
+
+        auto save = [this, name]
+        {
+            juce::String error;
+            processor.savePreset (name, error);
+            if (library.isVisible())
+                library.refresh();
+        };
+
+        if (! Presets::fileFor (name).existsAsFile())
+        {
+            save();
+            return;
+        }
+        auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, "Replace preset",
+                                                                    "A preset called \"" + name + "\" already exists. Replace it?",
+                                                                    "Replace", "Cancel", this);
+        juce::AlertWindow::showAsync (options, [save, safe = juce::Component::SafePointer<KaiaEditor> (this)] (int r)
+        {
+            if (r == 1 && safe != nullptr)
+                save();
+        });
+    }), false);
 }
 
 juce::File KaiaEditor::lastFolder()
 {
-    juce::File f (settings->getValue ("lastFolder"));
+    juce::File f (settings().getValue ("lastFolder"));
     return f.isDirectory() ? f : juce::File::getSpecialLocation (juce::File::userHomeDirectory);
 }
 
 juce::StringArray KaiaEditor::getRecents()
 {
-    auto list = juce::StringArray::fromLines (settings->getValue ("recent"));
+    auto list = juce::StringArray::fromLines (settings().getValue ("recent"));
     list.removeEmptyStrings();
     return list;
 }
@@ -272,9 +363,9 @@ void KaiaEditor::addRecent (const juce::File& f)
     list.insert (0, f.getFullPathName());
     while (list.size() > 12)
         list.remove (list.size() - 1);
-    settings->setValue ("recent", list.joinIntoString ("\n"));
-    settings->setValue ("lastFolder", (f.isDirectory() ? f : f.getParentDirectory()).getFullPathName());
-    settings->saveIfNeeded();
+    settings().setValue ("recent", list.joinIntoString ("\n"));
+    settings().setValue ("lastFolder", (f.isDirectory() ? f : f.getParentDirectory()).getFullPathName());
+    settings().saveIfNeeded();
 }
 
 void KaiaEditor::showOpenMenu()
@@ -292,14 +383,24 @@ void KaiaEditor::showOpenMenu()
         recentMenu.addItem (100 + i, f.getFileName() + "   (" + f.getParentDirectory().getFullPathName() + ")", f.exists());
     }
     menu.addSubMenu ("Recent", recentMenu, ! recents.isEmpty());
+
+    auto presets = Presets::list();
+    juce::PopupMenu presetMenu;
+    for (int i = 0; i < (int) presets.size(); ++i)
+        presetMenu.addItem (1000 + i, presets[(size_t) i].name);
+    menu.addSubMenu ("Presets", presetMenu, ! presets.empty());
     menu.addSeparator();
+    menu.addItem (4, "Save preset...");
     menu.addItem (3, "New empty kit");
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (openButton), [this, recents] (int result)
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (openButton), [this, recents, presets] (int result)
     {
         if (result == 1) chooseFiles (false);
         else if (result == 2) chooseFiles (true);
         else if (result == 3) processor.newEmptyKit();
+        else if (result == 4) savePresetDialog();
+        else if (result >= 1000 && result - 1000 < (int) presets.size())
+            processor.loadPreset (presets[(size_t) (result - 1000)].file);
         else if (result >= 100 && result - 100 < recents.size())
         {
             juce::File f (recents[result - 100]);
@@ -340,7 +441,7 @@ void KaiaEditor::chooseSamplesForPad (int pad, KaiaProcessor::AssignMode mode, i
         auto results = fc.getResults();
         if (results.isEmpty())
             return;
-        settings->setValue ("lastFolder", results[0].getParentDirectory().getFullPathName());
+        settings().setValue ("lastFolder", results[0].getParentDirectory().getFullPathName());
         processor.assignSamplesToPad (pad, results, mode, layer);
     });
 }
@@ -385,11 +486,34 @@ void KaiaEditor::showPadMenu (int pad, juce::Point<int>)
     menu.addItem (3, "Copy pad", hasLayers);
     menu.addItem (4, "Paste pad", clipboard != nullptr);
     menu.addItem (5, "Clear pad", hasLayers);
+    menu.addSeparator();
+    bool keygroups = kit.isKeygroupProgram;
+    if (processor.getMidiLearnPad() == pad)
+        menu.addItem (6, "Cancel MIDI Learn");
+    else
+        menu.addItem (6, "MIDI Learn (hit a drum to assign it)", ! keygroups);
+    auto& learned = processor.getTriggerMap().learned;
+    bool hasLearned = std::any_of (learned.begin(), learned.end(), [pad] (const auto& kv) { return kv.second == pad; });
+    menu.addItem (7, "Forget learned notes", hasLearned);
 
     menu.showMenuAsync (juce::PopupMenu::Options(), [this, pad] (int result)
     {
         switch (result)
         {
+            case 6:
+                if (processor.getMidiLearnPad() == pad)
+                    processor.cancelMidiLearn();
+                else
+                    processor.startMidiLearn (pad);
+                padGrid.refresh();
+                break;
+            case 7:
+            {
+                auto map = processor.getTriggerMap();
+                map.forgetPad (pad);
+                processor.setTriggerMap (map);
+                break;
+            }
             case 1: chooseSamplesForPad (pad, KaiaProcessor::AssignMode::Replace, 0); break;
             case 2: chooseSamplesForPad (pad, KaiaProcessor::AssignMode::Append, 0); break;
             case 3: clipboard = std::make_unique<Pad> (processor.getKit().pads[(size_t) pad]); break;
@@ -424,7 +548,7 @@ bool KaiaEditor::isInterestedInFileDrag (const juce::StringArray& files)
     {
         juce::File file (f);
         if (file.isDirectory() || isAudioFileName (file.getFileName()) || isProgramFileName (file.getFileName())
-             || file.hasFileExtension ("xpn"))
+             || file.hasFileExtension ("xpn") || Presets::isPresetFile (file))
             return true;
     }
     return false;

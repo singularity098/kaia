@@ -10,6 +10,9 @@
 #include "Formats/SndDecoder.h"
 #include "Engine/SamplerEngine.h"
 #include "Engine/KitRuntime.h"
+#include "Model/TriggerMap.h"
+#include "Model/UserFiles.h"
+#include "Formats/Library.h"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -29,6 +32,15 @@ void* operator new (std::size_t size)
     throw std::bad_alloc();
 }
 void* operator new[] (std::size_t size) { return operator new (size); }
+void* operator new (std::size_t size, const std::nothrow_t&) noexcept
+{
+    if (trackAllocations)
+        ++trackedAllocations;
+    return std::malloc (size == 0 ? 1 : size);
+}
+void* operator new[] (std::size_t size, const std::nothrow_t& nt) noexcept { return operator new (size, nt); }
+void operator delete (void* p, const std::nothrow_t&) noexcept { std::free (p); }
+void operator delete[] (void* p, const std::nothrow_t&) noexcept { std::free (p); }
 void operator delete (void* p) noexcept { std::free (p); }
 void operator delete[] (void* p) noexcept { std::free (p); }
 void operator delete (void* p, std::size_t) noexcept { std::free (p); }
@@ -696,8 +708,9 @@ static void testXpn()
         builder.addEntry (stream, compression, path, juce::Time::getCurrentTime());
     };
 
-    add ("Expansion.xml", juce::MemoryBlock (juce::String ("<?xml version=\"1.0\"?><expansion version=\"2.0.0.0\"><title>Test Expansion</title>"
-                                                           "<manufacturer>Kaia Tests</manufacturer><img>Cover.png</img></expansion>").toRawUTF8(), 160));
+    const juce::String expansionXml ("<?xml version=\"1.0\"?><expansion version=\"2.0.0.0\"><title>Test Expansion</title>"
+                                     "<manufacturer>Kaia Tests</manufacturer><img>Cover.png</img></expansion>");
+    add ("Expansion.xml", juce::MemoryBlock (expansionXml.toRawUTF8(), expansionXml.getNumBytesAsUTF8()));
     add ("[Samples]/XKick.wav", makeWav ({ 120, 0.5f, 0.5 }));
     add ("[Samples]/XSnare.wav", makeWav ({ 330, 0.5f, 0.5 }), 0);   // stored, not deflated
     std::vector<XPad> pads { XPad { 1, { { "XKick" } } }, XPad { 2, { { "XSnare" } } } };
@@ -1101,6 +1114,378 @@ static void testRealFiles (const juce::File& root)
     }
 }
 
+
+//==============================================================================
+// In-memory kit: pad i plays a sine of freqs[i] (no files involved)
+static SampleDataPtr makeTone (double freq, double seconds, double rate = 44100.0)
+{
+    auto sd = std::make_shared<SampleData>();
+    sd->sampleRate = rate;
+    sd->allocate (1, (juce::int64) (seconds * rate));
+    auto* d = sd->writePointer (0);
+    for (juce::int64 i = 0; i < sd->numFrames; ++i)
+        d[i] = 0.5f * (float) std::sin (2.0 * juce::MathConstants<double>::pi * freq * (double) i / rate);
+    return sd;
+}
+
+static void addTonePad (Kit& kit, SampleMap& samples, int pad, double freq, double seconds)
+{
+    Layer l;
+    l.sample = { "/mem/tone" + juce::String (pad), {} };
+    l.name = "tone" + juce::String (pad);
+    kit.pads[(size_t) pad].layers = { l };
+    samples[l.sample.toString()] = makeTone (freq, seconds);
+}
+
+static double freqAt (Render& out, int start, int len = 4000)
+{
+    return zeroCrossFreq (out.get (0, 0), start, len, 44100.0);
+}
+
+static void testTriggerMap()
+{
+    SECTION ("Drum module trigger maps and MIDI learn");
+
+    auto kit = Kit::makeEmpty();
+    SampleMap samples;
+    for (int i = 0; i < 16; ++i)
+        addTonePad (kit, samples, i, 200.0 + 100.0 * i, 0.3);    // A01 200 Hz, A02 300 Hz, ...
+
+    TriggerMap td10;
+    td10.moduleId = "roland-td10";
+    CHECK (td10.usesModule() && findDrumModule ("roland-td10")->name == "Roland TD-10", "TD-10 module exists");
+    for (auto& m : drumModules())
+    {
+        bool ok = ! m.notes.empty();
+        for (auto& [note, zone] : m.notes)
+            ok = ok && note >= 0 && note < 128 && (int) zone < (int) DrumZone::NumZones;
+        CHECK (ok, "module note table valid: " << m.name);
+    }
+
+    auto table = td10.resolve (kit);
+    auto plays = [&table] (int note) { return table[(size_t) note].size() == 1 ? table[(size_t) note].front() : -1; };
+    CHECK (plays (36) == 0, "TD-10 kick (36) -> A01");
+    CHECK (plays (38) == 1, "TD-10 snare (38) -> A02");
+    CHECK (plays (42) == 2, "TD-10 closed hi-hat (42) -> A03");
+    CHECK (plays (46) == 7, "TD-10 open hi-hat (46) -> A08");
+    CHECK (plays (44) == 3, "TD-10 pedal hi-hat (44) -> A04");
+    CHECK (plays (40) == 4, "TD-10 snare rim (40) -> A05");
+    CHECK (plays (48) == 8 && plays (50) == 8, "TD-10 tom 1 head and rim -> A09");
+    CHECK (plays (41) == 11 && plays (39) == 11, "TD-10 tom 4 head and rim -> A12");
+    CHECK (plays (49) == 12 && plays (51) == 14 && plays (53) == 15, "crash, ride, ride bell");
+    CHECK (table[37].empty() && table[60].empty(), "notes the module doesn't send are ignored");
+    CHECK (td10.notesForPad (kit, 7) == std::vector<int> { 46 }, "notes for the open hi-hat pad");
+
+    SamplerEngine engine;
+    engine.prepare (44100.0);
+
+    // Through the engine: note 36 now plays A01 (200 Hz); MPC default note 37 is silent
+    engine.setRuntime (buildRuntime (kit, &samples, &td10));
+    auto out = render (engine, { { 0, 36, 127 }, { 22050, 37, 127 } }, 1.0, 44100.0, 256, true);
+    CHECK (std::abs (freqAt (out, 500) - 200.0) < 3, "MIDI 36 plays A01 through the TD-10 map (" << freqAt (out, 500) << " Hz)");
+    CHECK (rms (out.get (0, 0), 22550, 4000) < 1.0e-6, "unmapped note is silent");
+    CHECK (trackedAllocations.load() == 0, "no allocations with a trigger map");
+    auto seq = engine.getLastInputNote();
+    CHECK ((seq & 0x7f) == 37 && (seq >> 8) == 2, "last input note reported for MIDI Learn");
+
+    // Pad audition from the UI uses program notes and bypasses the map
+    reset (engine);
+    engine.auditionNoteOn (kit.pads[1].note, 100);
+    out = render (engine, {}, 0.2, 44100.0);
+    CHECK (std::abs (freqAt (out, 500, 7000) - 300.0) < 3, "UI audition of A02 still works (" << freqAt (out, 500) << " Hz, rms " << rms (out.get (0, 0), 500, 4000) << ")");
+
+    // Learned notes win over the module
+    auto learnedMap = td10;
+    learnedMap.learn (60, 5);
+    learnedMap.learn (36, 9);
+    table = learnedMap.resolve (kit);
+    CHECK (plays (60) == 5 && plays (36) == 9 && plays (38) == 1, "learned notes override the module map");
+    learnedMap.forgetPad (9);
+    CHECK (learnedMap.resolve (kit)[36].front() == 0, "forgetting a pad restores the module note");
+
+    // Without a module, learning adds a note to the program's map
+    TriggerMap plain;
+    CHECK (plain.isDefault(), "default map");
+    plain.learn (36, 2);
+    table = plain.resolve (kit);
+    CHECK (plays (36) == 2 && plays (37) == 0 && plays (42) == 2, "learned note on top of the program note map");
+
+    // XML round trip
+    auto xml = learnedMap.toXml();
+    auto back = TriggerMap::fromXml (*xml);
+    CHECK (back == learnedMap, "trigger map XML round trip");
+    TriggerMap junk;
+    junk.learnedFromString ("x,1:2:3,200:1,5:900,7:3");
+    CHECK (junk.learned.size() == 2 && junk.learned[7] == 3, "learned-notes parser ignores junk");
+
+    // Note-on pads release on the *input* note's note-off
+    {
+        auto k2 = kit;
+        SampleMap s2 = samples;
+        addTonePad (k2, s2, 0, 200.0, 2.0);
+        k2.pads[0].trigger = TriggerMode::NoteOn;
+        k2.pads[0].env.adMode = false;
+        k2.pads[0].env.releaseMs = 5.0f;
+        reset (engine);
+        engine.setRuntime (buildRuntime (k2, &s2, &td10));
+        out = render (engine, { { 0, 36, 127 }, { 11025, 36, 0 } }, 1.0, 44100.0);
+        CHECK (rms (out.get (0, 0), 2000, 4000) > 0.1 && rms (out.get (0, 0), 14000, 4000) < 1.0e-4,
+               "note-off of the mapped note releases the pad");
+    }
+
+    // Hi-hat choke: the closed hi-hat cuts the ringing open hi-hat
+    {
+        auto k3 = kit;
+        SampleMap s3 = samples;
+        addTonePad (k3, s3, 7, 900.0, 2.0);     // open hi-hat rings for 2 s
+        addTonePad (k3, s3, 2, 400.0, 0.05);    // short closed hi-hat
+        for (bool choke : { true, false })
+        {
+            auto m = td10;
+            m.hiHatChoke = choke;
+            reset (engine);
+            engine.setRuntime (buildRuntime (k3, &s3, &m));
+            out = render (engine, { { 0, 46, 127 }, { 11025, 42, 127 } }, 1.0, 44100.0);
+            auto tail = rms (out.get (0, 0), 22050, 4000);
+            if (choke)
+                CHECK (tail < 1.0e-4, "closed hi-hat chokes the open hi-hat (" << tail << ")");
+            else
+                CHECK (tail > 0.1, "without hi-hat choke the open hi-hat keeps ringing");
+        }
+        // The kit's own choke groups are kept
+        k3.pads[7].muteGroup = 5;
+        auto rt = buildRuntime (k3, &s3, &td10);
+        CHECK (rt->pads[7].muteGroup == 5 && rt->pads[2].muteGroup == kHiHatChokeGroup, "existing mute groups win");
+        CHECK (k3.pads[2].muteGroup == 0, "the kit itself is not modified");
+    }
+
+    // Keygroup programs keep their key ranges
+    {
+        Kit kg;
+        kg.isKeygroupProgram = true;
+        kg.pads.resize (1);
+        kg.pads[0].noteLow = 40;
+        kg.pads[0].noteHigh = 50;
+        auto t = td10.resolve (kg);
+        CHECK (t[36].empty() && t[45].size() == 1, "keygroup programs ignore the drum map");
+    }
+
+    // A map change doesn't affect what the default (no module) path plays
+    reset (engine);
+    engine.setRuntime (buildRuntime (kit, &samples, &plain));
+    out = render (engine, { { 0, 37, 127 } }, 0.3, 44100.0);
+    CHECK (std::abs (freqAt (out, 500) - 200.0) < 3, "program note 37 still plays A01 without a module");
+}
+
+static void testPreview()
+{
+    SECTION ("Library preview");
+    auto kit = Kit::makeEmpty();
+    SampleMap samples;
+    addTonePad (kit, samples, 0, 200.0, 0.5);
+
+    PreviewSound pv;
+    Layer l;
+    l.sample = { "/mem/preview", {} };
+    pv.pad.layers = { l };
+    pv.pad.trigger = TriggerMode::NoteOn;      // ignored: previews are one-shots
+    pv.pad.output = 3;                         // ignored: previews play on Main
+    pv.samples[l.sample.toString()] = makeTone (700.0, 1.0);
+    pv.id = 7;
+
+    SamplerEngine engine;
+    engine.prepare (44100.0);
+    engine.startPreview (7);                   // arrives before its snapshot: waits for it
+    render (engine, {}, 0.05, 44100.0);
+    auto hits = engine.getPadHitCount (0);
+    engine.setRuntime (buildRuntime (kit, &samples, nullptr, &pv));
+    auto out = render (engine, {}, 0.5, 44100.0, 256, true);
+    CHECK (std::abs (freqAt (out, 500) - 700.0) < 4, "preview plays once its snapshot is active (" << freqAt (out, 500) << " Hz)");
+    CHECK (trackedAllocations.load() == 0, "no allocations while previewing");
+    CHECK (engine.getPadHitCount (0) == hits, "previews don't count as pad hits");
+
+    engine.stopPreview();
+    out = render (engine, {}, 0.2, 44100.0);
+    CHECK (rms (out.get (0, 0), 2000, 4000) < 1.0e-6, "stopPreview silences it");
+
+    // A stale preview id never plays
+    engine.startPreview (3);
+    out = render (engine, {}, 0.2, 44100.0);
+    CHECK (rms (out.get (0, 0), 0, 4000) < 1.0e-6, "stale preview ignored");
+}
+
+static void testLibrary()
+{
+    SECTION ("Library scan (read-only)");
+    auto lib = workDir.getChildFile ("Library");
+    lib.deleteRecursively();
+
+    // An expansion archive (from testXpn), a program folder and plain sample folders
+    lib.getChildFile ("Expansions").createDirectory();
+    workDir.getChildFile ("Test Expansion.xpn").copyFileTo (lib.getChildFile ("Expansions/Test Expansion.xpn"));
+    auto folderPack = lib.getChildFile ("Expansions/My Kit Folder");
+    writeWav (folderPack.getChildFile ("Samples/FKick.wav"), { 150, 0.5f, 0.2 });
+    folderPack.getChildFile ("Expansion.xml").replaceWithText ("<expansion><title>Folder Expansion</title></expansion>");
+    writeWav (folderPack.getChildFile ("Samples/FSnare.wav"), { 350, 0.5f, 0.2 });
+    folderPack.getChildFile ("Folder Kit.xpm").replaceWithText (
+        makeXpmXml ("Folder Kit", { XPad { 1, { { "FKick" } } }, XPad { 2, { { "FSnare" } } } }, { { 1, 36 }, { 2, 38 } }));
+    writeWav (lib.getChildFile ("One Shots/Kicks/Kick A.wav"), { 100, 0.5f, 0.1 });
+    writeWav (lib.getChildFile ("One Shots/Kicks/Kick B.wav"), { 110, 0.5f, 0.1 });
+    writeWav (lib.getChildFile ("One Shots/Snares/Snare A.wav"), { 300, 0.5f, 0.1 });
+    lib.getChildFile ("One Shots/Kicks/._Kick A.wav").replaceWithText ("mac junk");
+    lib.getChildFile ("One Shots/readme.txt").replaceWithText ("not audio");
+
+    // Snapshot of every file so we can prove nothing is written
+    std::map<juce::String, std::pair<juce::int64, juce::int64>> before;
+    auto snapshot = [&lib]
+    {
+        std::map<juce::String, std::pair<juce::int64, juce::int64>> m;
+        for (const auto& e : juce::RangedDirectoryIterator (lib, true, "*", juce::File::findFilesAndDirectories))
+            m[e.getFile().getFullPathName()] = { e.getFile().getSize(), e.getFile().getLastModificationTime().toMilliseconds() };
+        return m;
+    };
+    before = snapshot();
+
+    int calls = 0;
+    auto index = Library::scan (lib, nullptr, [&calls] (const juce::String&) { ++calls; return true; });
+    CHECK (index.packs.size() == 4, "4 packs: archive, program folder, two sample folders (got " << (int) index.packs.size() << ")");
+
+    const LibraryPack* xpn = nullptr;
+    const LibraryPack* folder = nullptr;
+    const LibraryPack* kicks = nullptr;
+    for (auto& p : index.packs)
+    {
+        if (p.isArchive) xpn = &p;
+        if (p.title == "Folder Expansion") folder = &p;
+        if (p.title.endsWith ("Kicks")) kicks = &p;
+    }
+    CHECK (xpn != nullptr && xpn->title == "Test Expansion" && xpn->programs.size() == 2 && xpn->samples.size() == 2,
+           "expansion: title, programs and samples from the archive");
+    CHECK (folder != nullptr && folder->programs.size() == 1 && folder->samples.size() == 2, "program folder pack with its samples ("
+           << (folder != nullptr ? folder->programs.joinIntoString (",") + " / " + folder->samples.joinIntoString (",") : juce::String ("missing")) << ")");
+    CHECK (kicks != nullptr && kicks->samples.size() == 2, "sample folder without junk files");
+    CHECK (index.numPrograms() == 3 && index.numSamples() == 7, "counts: " << index.numPrograms() << " programs, " << index.numSamples() << " samples");
+    CHECK (calls > 0, "progress callback polled");
+
+    if (xpn != nullptr && folder != nullptr && kicks != nullptr)
+    {
+        // Samples from different packs load and can be mixed on one kit
+        juce::String error;
+        auto a = loadSample (xpn->sampleRef (0), error);
+        auto b = loadSample (kicks->sampleRef (0), error);
+        CHECK (a != nullptr && b != nullptr, "samples load from an archive and from a folder: " << error);
+
+        auto loc = folder->programLocation (0);
+        auto r = KitLoader::loadProgram (loc);
+        CHECK (r.ok && r.kit.countSamples() == 2, "program from the library loads: " << r.error);
+
+        auto xr = KitLoader::loadProgram (xpn->programLocation (0));
+        CHECK (xr.ok && xr.kit.countSamples() == 2, "program inside the library archive loads");
+    }
+
+    // Cache round trip, and unchanged archives are reused on rescan
+    auto cacheXml = index.toXml();
+    auto restored = LibraryIndex::fromXml (*cacheXml);
+    CHECK (restored.packs.size() == index.packs.size() && restored.numSamples() == index.numSamples()
+           && restored.packs[0].title == index.packs[0].title, "library index XML round trip");
+    for (auto& p : restored.packs)
+        if (p.isArchive)
+            p.programs.add ("marker.xpm");    // only present if the cached entry is reused
+    auto again = Library::scan (lib, &restored);
+    bool reused = false;
+    for (auto& p : again.packs)
+        if (p.isArchive)
+            reused = p.programs.contains ("marker.xpm");
+    CHECK (reused, "unchanged archive taken from the cache");
+
+    // Cancelling stops early
+    auto cancelled = Library::scan (lib, nullptr, [] (const juce::String&) { return false; });
+    CHECK (cancelled.packs.size() < index.packs.size(), "scan can be cancelled");
+
+    CHECK (snapshot() == before, "scanning and loading never modify the library");
+}
+
+static void testUserFiles()
+{
+    SECTION ("Config folder and presets");
+    auto configDir = workDir.getChildFile ("config");
+    CHECK (UserFiles::configDirectory() == configDir, "KAIA_CONFIG_DIR override");
+    CHECK (UserFiles::presetsDirectory().isAChildOf (configDir) && UserFiles::settingsFile().isAChildOf (configDir), "everything inside the config folder");
+
+   #if JUCE_LINUX
+    {
+        // XDG locations (and legacy migration) with a fake home
+        auto home = workDir.getChildFile ("home");
+        auto oldHome = juce::SystemStats::getEnvironmentVariable ("HOME", {});
+        auto oldXdg = juce::SystemStats::getEnvironmentVariable ("XDG_CONFIG_HOME", {});
+        auto hadXdg = std::getenv ("XDG_CONFIG_HOME") != nullptr;
+        setenv ("HOME", home.getFullPathName().toRawUTF8(), 1);
+        unsetenv ("KAIA_CONFIG_DIR");
+        unsetenv ("XDG_CONFIG_HOME");
+        CHECK (UserFiles::configDirectory() == home.getChildFile (".config/kaia"), "Linux default: ~/.config/kaia ("
+               << UserFiles::configDirectory().getFullPathName() << ")");
+        setenv ("XDG_CONFIG_HOME", workDir.getChildFile ("xdg").getFullPathName().toRawUTF8(), 1);
+        CHECK (UserFiles::configDirectory() == workDir.getChildFile ("xdg/kaia"), "honours XDG_CONFIG_HOME");
+        setenv ("XDG_CONFIG_HOME", "relative/path", 1);
+        CHECK (UserFiles::configDirectory() == home.getChildFile (".config/kaia"), "ignores a relative XDG_CONFIG_HOME");
+        unsetenv ("XDG_CONFIG_HOME");
+
+        // Kaia 1.0 wrote ~/Kaia/Kaia.settings: it moves to ~/.config/kaia/settings.xml
+        home.getChildFile ("Kaia/Kaia.settings").create();
+        home.getChildFile ("Kaia/Kaia.settings").replaceWithText ("<PROPERTIES><VALUE name=\"recent\" val=\"x\"/></PROPERTIES>");
+        UserFiles::migrateLegacySettings();
+        CHECK (home.getChildFile (".config/kaia/settings.xml").loadFileAsString().contains ("recent"), "legacy settings migrated");
+        CHECK (! home.getChildFile ("Kaia").exists(), "empty legacy ~/Kaia folder removed");
+
+        home.getChildFile ("Kaia").createDirectory();
+        home.getChildFile ("Kaia/Kaia.settings").replaceWithText ("old");
+        home.getChildFile ("Kaia/mine.txt").replaceWithText ("user file");
+        UserFiles::migrateLegacySettings();
+        CHECK (home.getChildFile ("Kaia/mine.txt").existsAsFile() && ! home.getChildFile ("Kaia/Kaia.settings").exists(),
+               "legacy folder kept when it holds other files");
+        CHECK (home.getChildFile (".config/kaia/settings.xml").loadFileAsString().contains ("recent"), "existing settings not overwritten");
+
+        setenv ("HOME", oldHome.toRawUTF8(), 1);
+        if (hadXdg)
+            setenv ("XDG_CONFIG_HOME", oldXdg.toRawUTF8(), 1);
+        setenv ("KAIA_CONFIG_DIR", configDir.getFullPathName().toRawUTF8(), 1);
+    }
+   #endif
+
+    // Presets
+    auto kit = Kit::makeEmpty();
+    Layer l;
+    l.sample = { workDir.getChildFile ("Library/One Shots/Kicks/Kick A.wav").getFullPathName(), {} };
+    l.name = "Kick A";
+    kit.pads[0].layers = { l };
+    kit.pads[0].tuneSemis = -2.0f;
+    Layer x;
+    x.sample = { workDir.getChildFile ("Test Expansion.xpn").getFullPathName(), "[Samples]/XSnare.wav" };
+    kit.pads[1].layers = { x };
+
+    juce::String error;
+    juce::File saved;
+    CHECK (Presets::save (kit, "My Mix", error, &saved), "save preset: " << error);
+    CHECK (saved == UserFiles::presetsDirectory().getChildFile ("My Mix.kaiapreset"), "preset file in the presets folder");
+    CHECK (Presets::save (kit, "../../escape/attempt", error, &saved) && saved.isAChildOf (UserFiles::presetsDirectory()),
+           "preset names can't leave the presets folder (" << saved.getFullPathName() << ")");
+    auto list = Presets::list();
+    CHECK (list.size() == 2, "presets listed (" << (int) list.size() << ")");
+
+    Kit loaded;
+    CHECK (Presets::load (UserFiles::presetsDirectory().getChildFile ("My Mix.kaiapreset"), loaded, error), "load preset: " << error);
+    CHECK (loaded.name == "My Mix" && loaded.pads[0].tuneSemis == -2.0f && loaded.pads[1].layers[0].sample == x.sample,
+           "preset keeps pads and references into the archive");
+    auto r = KitLoader::reloadKit (loaded);
+    CHECK (r.ok && r.kit.countSamples() == 2 && r.kit.countMissing() == 0, "preset samples load from file and archive");
+
+    auto outside = workDir.getChildFile ("outside.kaiapreset");
+    outside.replaceWithText ("x");
+    CHECK (! Presets::remove (outside) && outside.existsAsFile(), "remove() refuses files outside the presets folder");
+    CHECK (Presets::remove (UserFiles::presetsDirectory().getChildFile ("My Mix.kaiapreset")), "remove preset");
+    CHECK (! Presets::load (outside, loaded, error), "non-preset rejected: " << error);
+}
+
 //==============================================================================
 int main (int argc, char** argv)
 {
@@ -1119,6 +1504,13 @@ int main (int argc, char** argv)
     workDir.deleteRecursively();
     workDir.createDirectory();
 
+    // Never touch the real config folder
+   #if JUCE_WINDOWS
+    _putenv_s ("KAIA_CONFIG_DIR", workDir.getChildFile ("config").getFullPathName().toRawUTF8());
+   #else
+    setenv ("KAIA_CONFIG_DIR", workDir.getChildFile ("config").getFullPathName().toRawUTF8(), 1);
+   #endif
+
     testXpmXml();
     testXpmJson();
     testXpn();
@@ -1127,6 +1519,10 @@ int main (int argc, char** argv)
     testPgm3000();
     testKeygroup();
     testFolderAndEdgeCases();
+    testTriggerMap();
+    testPreview();
+    testLibrary();
+    testUserFiles();
     testRealFiles (realData);
     testPerformance();
 

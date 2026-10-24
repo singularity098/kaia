@@ -88,6 +88,8 @@ KaiaProcessor::KaiaProcessor()
 {
     masterParam = parameters.getRawParameterValue ("master");
     kit = Kit::makeEmpty();
+    triggers = defaultTriggerMap();
+    cachedTriggerXml = triggers.toXml()->toString();
     loader = std::make_unique<LoaderThread>();
     rebuildRuntime();
     setStatus ("Open an MPC program (.xpm, .pgm), expansion (.xpn) or a folder of samples.", false);
@@ -99,6 +101,7 @@ KaiaProcessor::~KaiaProcessor()
     stopTimer();
     alive->store (false);
     ++loadGeneration;          // cancels any load in progress
+    previewPool.removeAllJobs (true, 5000);
     loader.reset();
     engine.collectGarbage();
 }
@@ -202,6 +205,7 @@ SampleDataPtr KaiaProcessor::getSample (const SampleRef& ref) const
 void KaiaProcessor::timerCallback()
 {
     engine.collectGarbage();
+    pollMidiLearn();
 
     if (stateDirty)
     {
@@ -214,9 +218,185 @@ void KaiaProcessor::timerCallback()
 
 void KaiaProcessor::rebuildRuntime()
 {
-    engine.setRuntime (buildRuntime (kit, &samples));
+    engine.setRuntime (buildRuntime (kit, &samples, &triggers, preview.get()));
+    inputTable = triggers.resolve (kit);
     stateDirty = true;
     sendChangeMessage();
+}
+
+//==============================================================================
+TriggerMap KaiaProcessor::defaultTriggerMap()
+{
+    juce::SharedResourcePointer<SharedSettings> shared;
+    auto& props = shared->get();
+    TriggerMap m;
+    m.moduleId = props.getValue ("drumModule");
+    if (findDrumModule (m.moduleId) == nullptr)
+        m.moduleId = {};
+    m.hiHatChoke = props.getBoolValue ("hiHatChoke", true);
+    m.learnedFromString (props.getValue ("learnedNotes"));
+    return m;
+}
+
+void KaiaProcessor::saveTriggerMapAsDefault()
+{
+    auto& props = settings->get();
+    props.setValue ("drumModule", triggers.moduleId);
+    props.setValue ("hiHatChoke", triggers.hiHatChoke);
+    props.setValue ("learnedNotes", triggers.learnedToString());
+    props.saveIfNeeded();
+}
+
+void KaiaProcessor::setTriggerMap (const TriggerMap& map)
+{
+    triggers = map;
+    {
+        const juce::ScopedLock sl (stateLock);
+        cachedTriggerXml = triggers.toXml()->toString();
+    }
+    saveTriggerMapAsDefault();
+    rebuildRuntime();
+}
+
+std::vector<int> KaiaProcessor::getInputNotesForPad (int padIndex) const
+{
+    std::vector<int> notes;
+    for (int n = 0; n < 128; ++n)
+        for (auto p : inputTable[(size_t) n])
+            if (p == padIndex)
+                notes.push_back (n);
+    return notes;
+}
+
+void KaiaProcessor::startMidiLearn (int padIndex)
+{
+    if (padIndex < 0 || padIndex >= (int) kit.pads.size())
+        return;
+    learnPad = padIndex;
+    learnSequence = engine.getLastInputNote() >> 8;
+    setStatus ("MIDI Learn: hit the drum (or key) that should play pad " + padName (padIndex) + ". Right-click the pad to cancel.", false);
+}
+
+void KaiaProcessor::cancelMidiLearn()
+{
+    if (learnPad < 0)
+        return;
+    learnPad = -1;
+    setStatus ("MIDI Learn cancelled.", false);
+}
+
+void KaiaProcessor::pollMidiLearn()
+{
+    if (learnPad < 0)
+        return;
+    auto last = engine.getLastInputNote();
+    if ((last >> 8) == learnSequence)
+        return;
+
+    auto note = (int) (last & 0x7f);
+    auto pad = learnPad;
+    learnPad = -1;
+    auto map = triggers;
+    map.learn (note, pad);
+    setTriggerMap (map);
+    setStatus ("MIDI note " + noteName (note) + " now plays pad " + padName (pad) + ".", false);
+}
+
+//==============================================================================
+void KaiaProcessor::setPreview (std::unique_ptr<PreviewSound> sound)
+{
+    preview = std::move (sound);
+    rebuildRuntime();
+    if (preview != nullptr)
+        engine.startPreview (preview->id);
+}
+
+void KaiaProcessor::previewSample (const SampleRef& ref)
+{
+    Pad pad;
+    Layer layer;
+    layer.sample = ref;
+    layer.name = ref.displayName();
+    pad.layers.push_back (layer);
+    previewPad (pad);
+}
+
+void KaiaProcessor::previewPad (const Pad& source)
+{
+    auto generation = ++previewGeneration;
+    auto flag = alive;
+    previewPool.addJob ([this, flag, source, generation]
+    {
+        if (previewGeneration.load() != generation)
+            return;
+
+        auto sound = std::make_shared<PreviewSound>();
+        sound->pad = source;
+        for (auto& l : sound->pad.layers)
+        {
+            if (! l.hasSample() || l.missing || sound->samples.count (l.sample.toString()) > 0)
+                continue;
+            juce::String error;
+            if (auto data = loadSample (l.sample, error))
+                sound->samples[l.sample.toString()] = data;
+        }
+
+        juce::MessageManager::callAsync ([this, flag, sound, generation]
+        {
+            if (! flag->load() || previewGeneration.load() != generation)
+                return;
+            auto owned = std::make_unique<PreviewSound> (std::move (*sound));
+            owned->id = ++previewCounter;
+            setPreview (std::move (owned));
+        });
+    });
+}
+
+void KaiaProcessor::stopPreview()
+{
+    ++previewGeneration;
+    engine.stopPreview();
+}
+
+//==============================================================================
+bool KaiaProcessor::savePreset (const juce::String& name, juce::String& error)
+{
+    juce::File file;
+    if (! Presets::save (kit, name, error, &file))
+    {
+        setStatus (error, true);
+        return false;
+    }
+    kit.name = name.trim();
+    stateDirty = true;
+    setStatus ("Saved preset \"" + kit.name + "\" to " + file.getFullPathName(), false);
+    return true;
+}
+
+void KaiaProcessor::loadPreset (const juce::File& presetFile)
+{
+    Kit presetKit;
+    juce::String error;
+    if (! Presets::load (presetFile, presetKit, error))
+    {
+        setStatus (error, true);
+        return;
+    }
+
+    auto generation = ++loadGeneration;
+    setStatus ("Loading preset " + presetKit.name + "...", false);
+    enqueueJob ([this, presetKit, generation]
+    {
+        auto result = KitLoader::reloadKit (presetKit, progressCallback (generation));
+        postToMessageThread ([this, result = std::move (result), generation]() mutable
+        {
+            if (loadGeneration.load() != generation)
+                return;
+            applyLoadResult (std::move (result), false);
+            if (! statusIsError)
+                setStatus ("Loaded preset \"" + kit.name + "\"" + (kit.countMissing() > 0 ? ", " + juce::String (kit.countMissing()) + " samples missing" : juce::String()), kit.countMissing() > 0);
+        });
+    });
 }
 
 void KaiaProcessor::setStatus (const juce::String& message, bool isError)
@@ -299,18 +479,23 @@ void KaiaProcessor::applyLoadResult (LoadResult result, bool keepPrograms)
 }
 
 //==============================================================================
-void KaiaProcessor::openPack (const juce::File& target)
+void KaiaProcessor::openPack (const juce::File& target, const ProgramLocation& select)
 {
     if (target.existsAsFile() && isAudioFileName (target.getFileName()))
     {
         loadAudioFiles ({ target });
         return;
     }
+    if (target.existsAsFile() && Presets::isPresetFile (target))
+    {
+        loadPreset (target);
+        return;
+    }
 
     auto generation = ++loadGeneration;
     setStatus ("Opening " + target.getFileName() + "...", false);
 
-    enqueueJob ([this, target, generation]
+    enqueueJob ([this, target, select, generation]
     {
         if (loadGeneration.load() != generation)
             return;
@@ -343,7 +528,7 @@ void KaiaProcessor::openPack (const juce::File& target)
             }
         }
 
-        postToMessageThread ([this, target, info, list, error, generation]
+        postToMessageThread ([this, target, select, info, list, error, generation]
         {
             if (loadGeneration.load() != generation)
                 return;
@@ -365,6 +550,8 @@ void KaiaProcessor::openPack (const juce::File& target)
             {
                 if (target.existsAsFile() && ! programs[(size_t) i].location.inArchive()
                      && programs[(size_t) i].location.file == target)
+                    toLoad = i;
+                if (select.file != juce::File() && programs[(size_t) i].location.toString() == select.toString())
                     toLoad = i;
             }
             if (toLoad < 0)
@@ -473,23 +660,31 @@ void KaiaProcessor::loadAudioFiles (const juce::Array<juce::File>& files)
 
 void KaiaProcessor::assignSamplesToPad (int padIndex, const juce::Array<juce::File>& files, AssignMode mode, int layerIndex)
 {
-    if (padIndex < 0 || padIndex >= (int) kit.pads.size() || files.isEmpty())
+    std::vector<SampleRef> refs;
+    for (auto& f : files)
+        if (isAudioFileName (f.getFileName()))
+            refs.push_back ({ f.getFullPathName(), {} });
+    assignSamplesToPad (padIndex, refs, mode, layerIndex);
+}
+
+void KaiaProcessor::assignSamplesToPad (int padIndex, const std::vector<SampleRef>& refs, AssignMode mode, int layerIndex)
+{
+    if (padIndex < 0 || padIndex >= (int) kit.pads.size() || refs.empty())
         return;
 
-    enqueueJob ([this, padIndex, files, mode, layerIndex]
+    enqueueJob ([this, padIndex, refs, mode, layerIndex]
     {
         std::vector<std::pair<SampleRef, SampleDataPtr>> loaded;
         juce::StringArray errors;
-        for (auto& f : files)
+        for (auto& ref : refs)
         {
-            if (! isAudioFileName (f.getFileName()) || (int) loaded.size() >= kMaxLayers)
-                continue;
-            SampleRef ref { f.getFullPathName(), {} };
+            if ((int) loaded.size() >= kMaxLayers)
+                break;
             juce::String error;
             if (auto data = loadSample (ref, error))
                 loaded.push_back ({ ref, data });
             else
-                errors.add (f.getFileName() + ": " + error);
+                errors.add (ref.displayName() + ": " + error);
         }
 
         postToMessageThread ([this, padIndex, loaded, errors, mode, layerIndex]
@@ -550,6 +745,48 @@ void KaiaProcessor::assignSamplesToPad (int padIndex, const juce::Array<juce::Fi
             rebuildRuntime();
             setStatus ("Loaded " + juce::String ((int) loaded.size()) + " sample" + (loaded.size() == 1 ? "" : "s")
                        + " on " + (pad.isKeygroup() ? "keygroup " + juce::String (padIndex + 1) : "pad " + padName (padIndex)), false);
+        });
+    });
+}
+
+void KaiaProcessor::importPad (int padIndex, const Pad& source)
+{
+    if (padIndex < 0 || padIndex >= (int) kit.pads.size())
+        return;
+
+    enqueueJob ([this, padIndex, source]
+    {
+        Kit single;
+        single.pads.push_back (source);
+        SampleMap loaded;
+        juce::StringArray loadWarnings;
+        KitLoader::loadSamples (single, loaded, loadWarnings);
+
+        postToMessageThread ([this, padIndex, pad = single.pads.front(), loaded, loadWarnings]
+        {
+            if (padIndex >= (int) kit.pads.size())
+                return;
+            auto& target = kit.pads[(size_t) padIndex];
+            auto note = target.note, lo = target.noteLow, hi = target.noteHigh;
+            target = pad;
+            if (! kit.isKeygroupProgram)
+            {
+                // Drum kit: keep the pad's trigger note, and a keygroup becomes a plain pad
+                target.note = note >= 0 ? note : defaultPadNote (padIndex);
+                target.noteLow = target.noteHigh = -1;
+            }
+            else
+            {
+                target.noteLow = lo;
+                target.noteHigh = hi;
+            }
+            target.output = 0;
+            for (auto& [key, data] : loaded)
+                samples[key] = data;
+            rebuildRuntime();
+            setStatus ("Copied \"" + (pad.name.isNotEmpty() ? pad.name : (pad.layers.empty() ? juce::String ("pad") : pad.layers.front().name))
+                       + "\" to pad " + padName (padIndex) + (loadWarnings.isEmpty() ? juce::String() : " (" + loadWarnings.joinIntoString ("; ") + ")"),
+                       ! loadWarnings.isEmpty());
         });
     });
 }
@@ -648,6 +885,16 @@ void KaiaProcessor::getStateInformation (juce::MemoryBlock& destData)
     if (auto params = parameters.copyState().createXml())
         state.addChildElement (params.release());
 
+    {
+        juce::String triggerXml;
+        {
+            const juce::ScopedLock sl (stateLock);
+            triggerXml = cachedTriggerXml;
+        }
+        if (auto t = juce::parseXML (triggerXml))
+            state.addChildElement (t.release());
+    }
+
     copyXmlToBinary (state, destData);
 }
 
@@ -668,9 +915,15 @@ void KaiaProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (kitXml == nullptr)
         return;
 
+    // Projects saved before trigger maps existed keep the current (default) map
+    auto restoredTriggers = triggers;
+    if (auto* t = xml->getChildByName ("TriggerMap"))
+        restoredTriggers = TriggerMap::fromXml (*t);
+
     {
         const juce::ScopedLock sl (stateLock);
         cachedKitXml = kitXml->toString();
+        cachedTriggerXml = restoredTriggers.toXml()->toString();
     }
 
     ++loadGeneration;
@@ -679,15 +932,17 @@ void KaiaProcessor::setStateInformation (const void* data, int sizeInBytes)
     auto result = KitLoader::reloadKit (Kit::fromXml (*kitXml));
     if (juce::SystemStats::getEnvironmentVariable ("KAIA_DEBUG", {}).isNotEmpty())
         std::cerr << "[Kaia] setState: kit " << result.kit.name << " samples=" << result.samples.size() << " counted=" << result.kit.countSamples() << " missing=" << result.kit.countMissing() << " warnings=" << result.warnings.joinIntoString ("; ") << std::endl;
-    engine.setRuntime (buildRuntime (result.kit, &result.samples));
+    engine.setRuntime (buildRuntime (result.kit, &result.samples, &restoredTriggers));
 
-    auto apply = [this, result = std::move (result), savedPad, savedBank, pack]() mutable
+    auto apply = [this, result = std::move (result), savedPad, savedBank, pack, restoredTriggers]() mutable
     {
+        triggers = restoredTriggers;
         kit = std::move (result.kit);
         samples = std::move (result.samples);
         warnings = result.warnings;
         selectedPad = juce::jlimit (0, juce::jmax (0, (int) kit.pads.size() - 1), savedPad);
         selectedBank = juce::jlimit (0, kNumBanks - 1, savedBank);
+        inputTable = triggers.resolve (kit);
         sendChangeMessage();
 
         auto msg = "Restored \"" + kit.name + "\" (" + juce::String (kit.countSamples()) + " samples)";

@@ -125,7 +125,7 @@ namespace
 //==============================================================================
 juce::String KitLoader::fileFilter()
 {
-    return "*.xpm;*.xpn;*.pgm;*.XPM;*.XPN;*.PGM;*.wav;*.WAV;*.aif;*.aiff;*.flac;*.snd;*.SND";
+    return "*.xpm;*.xpn;*.pgm;*.XPM;*.XPN;*.PGM;*.kaiapreset;*.wav;*.WAV;*.aif;*.aiff;*.flac;*.snd;*.SND";
 }
 
 std::vector<ProgramEntry> KitLoader::listPrograms (const juce::File& target, PackInfo* info, juce::String& error)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Model/Kit.h"
+#include "../Model/TriggerMap.h"
 #include "SampleData.h"
 #include <map>
 
@@ -60,7 +61,13 @@ struct PadRT
 struct KitRuntime
 {
     std::vector<PadRT> pads;
-    std::array<std::vector<int>, 128> padsForNote;   // which pads respond to each MIDI note
+    std::array<std::vector<int>, 128> padsForNote;   // which pads respond to each program note (UI audition, simult targets)
+    std::array<std::vector<int>, 128> padsForInput;  // which pads incoming MIDI notes play (after the trigger map)
+    std::array<int, kMaxPads> padNote {};            // the program note a pad's voices carry (mute targets refer to it)
+
+    // A sound auditioned from the library, played on Main outside the kit
+    PadRT preview;
+    juce::uint32 previewId = 0;
     float  gain = 1.0f;
     double tuneSemis = 0.0;
     float  pitchBendRange = 2.0f;
@@ -68,6 +75,16 @@ struct KitRuntime
     std::vector<SampleDataPtr> keepAlive;
 };
 
-std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples);
+// Something to audition that is not part of the kit (a library sample or a pad of another program)
+struct PreviewSound
+{
+    Pad pad;
+    SampleMap samples;
+    juce::uint32 id = 0;
+};
+
+// triggers: how incoming MIDI notes reach the pads (nullptr = the program's own note map).
+std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples,
+                                          const TriggerMap* triggers = nullptr, const PreviewSound* preview = nullptr);
 
 }

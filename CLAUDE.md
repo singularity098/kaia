@@ -17,6 +17,8 @@ The owner built this to replace Kontakt Player for drum libraries because Kontak
 * **Always commit and push directly to `main`.** No feature branches or PRs for this project.
 * End commit messages with the attribution lines given by the session (Co-Authored-By etc.).
 * Keep `README.md` (user-facing) and this file in sync when behaviour, options or formats change.
+* **Never write into the user's library** (expansions, program folders, samples). Kaia writes
+  only inside the config folder (`UserFiles::configDirectory()`): settings, presets, library cache.
 * Don't commit build output (`build*/` is ignored), generated `.xpn` packs, or third-party MPC
   files used for testing (they belong to other projects; keep them outside the repo).
 
@@ -26,6 +28,10 @@ The owner built this to replace Kontakt Player for drum libraries because Kontak
 Source/
   Model/Kit.h/.cpp          Kit / Pad / Layer data model, XML (de)serialisation for plugin state,
                             MPC default pad->note map, MPC fader-law helpers
+  Model/TriggerMap          e-drum modules (note -> DrumZone tables), fixed zone->pad layout,
+                            learned notes; resolve() = which pads each MIDI note plays
+  Model/UserFiles           config folder (XDG on Linux, KAIA_CONFIG_DIR override, legacy
+                            ~/Kaia migration), SharedSettings (PropertiesFile), Presets
   Formats/
     ZipReader               own zip reader: stored + deflate, Zip64, detects encryption (never decrypts)
     SampleSource            audio decoding (JUCE formats + .SND), SampleIndex (find samples by name),
@@ -35,17 +41,22 @@ Source/
     PgmParser               MPC1000-family, MPC2000XL, MPC3000 .pgm -> Kit
     KitLoader               listPrograms (folder / xpn / siblings), parseProgram (+ sample resolution),
                             loadSamples (parallel decode, weak cache), reloadKit, relinkMissing
+    Library                 scan of the library folder into packs (xpn / program folder / sample
+                            folder), XML cache, LibraryService (shared, background scan thread)
   Engine/
     SampleData.h            immutable decoded audio (float, zero-padded both ends), SampleMap
     KitRuntime              immutable render snapshot of a Kit (built on the message thread)
     SamplerEngine           voices, MIDI, layer selection, chokes, envelopes, SVF filter, multi-out
     SincTable               polyphase windowed-sinc tables (24 taps, 256 phases, 8 anti-alias bands)
   PluginProcessor           buses (Main + Aux 1-16), loader thread, state save/restore, edit API
-  UI/                       LookAndFeel, PadGrid (MPC layout, pad 1 bottom-left), PadEditor, ProgramBrowser, PluginEditor
+  UI/                       LookAndFeel (near-black theme, user accent colour), PadGrid (MPC layout,
+                            pad 1 bottom-left, library drop target), PadEditor, ProgramBrowser,
+                            LibraryBrowser (TreeView, audition, drag to pads), SettingsPanel, PluginEditor
 Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
-  UiSnapshot.cpp            KaiaUiSnapshot: renders the real editor to PNG (docs/editor.png)
+  UiSnapshot.cpp            KaiaUiSnapshot: renders the real editor to PNG (docs/editor.png; also
+                            library.png/settings.png when given a library folder)
 tools/
   make_demo_pack.py         generates "Kaia Demo Kit.xpn" (synthesized drums, safe to redistribute)
   sandbox-sysroot.sh        header-only sysroot for build machines without the distro -dev packages
@@ -72,6 +83,16 @@ braces on their own line).
   *retired* until no voice references it, then handed to the message thread through a lock-free
   FIFO (`collectGarbage()` on a 10 Hz timer). UI pad clicks reach the engine through a lock-free
   FIFO (`auditionNoteOn/Off`).
+* MIDI input goes through `KitRuntime::padsForInput` (trigger map resolved at build time);
+  UI auditions and simult targets use `padsForNote` (program notes). Voices carry the pad's
+  program note (`note`, used by mute targets) and the MIDI note that started them (`inputNote`,
+  used by note-off). Changing the trigger map = `rebuildRuntime()`; nothing on the audio path
+  costs more than a table lookup, and Kaia must stay zero-latency.
+* Library previews: a `PreviewSound` (pad + its samples, decoded on `previewPool`) becomes part of
+  the next runtime snapshot (`KitRuntime::preview`, `previewId`); `engine.startPreview(id)` waits
+  until that snapshot is active. Every `rebuildRuntime()` passes the current preview along.
+* MIDI Learn: the engine publishes the last note-on as `(sequence << 8) | note` in an atomic; the
+  processor's timer polls it while a pad is learning.
 * `KaiaTests` overrides global `operator new` and fails if `process()` allocates — keep it passing.
 * `getStateInformation` may be called off the message thread: it then uses `cachedKitXml`
   (refreshed by the timer when `stateDirty`). `setStateInformation` loads samples synchronously
@@ -106,6 +127,18 @@ PGM:
 * Classic attack/decay 0..100 -> (v²+1)/2 ms (VMPC2000XL firmware curve); decay mode 0 = end.
 * `.SND`: 2000XL has a 42-byte header and stores stereo as the whole left block then the right;
   MPC3000 has a 38-byte header, 44.1 kHz.
+
+E-drum modules (`TriggerMap.cpp`): zone layout A01 kick, A02 snare, A03 HH closed, A04 HH pedal,
+A05 snare rim, A06 cross-stick, A07 aux, A08 HH open, A09-A12 toms 1-4, A13/A14 crash 1/2, A15
+ride, A16 ride bell; rims/edges play the head/bow pad. Note tables are factory defaults: Roland
+classic (TD-3..TD-10) 36/38/40, toms 48/50 45/47 43/58 41/39, HH 42/46/44, crashes 49/55 57/52,
+ride 51/59/53; modern Roland and Alesis add 37 cross-stick, 22/26 HH edges; Yamaha DTX toms
+48/47/43 (DTX402 reference), 37 closed rim, 83 foot splash; GM for the rest. Partly checked against the
+published TD-17/TD-27 and DTX402 maps (kick, snare, rim, toms, hi-hats, ride bell); the TD-10 and
+the rest are unverified. With a module, unlisted
+notes are ignored and HH pads share mute group 33 (`kHiHatChokeGroup`) unless the kit groups them.
+Keygroup programs ignore the map. The map is global (settings) and also saved per project
+(`<TriggerMap>` in `KaiaState`); projects without one keep the instance's default.
 
 Engine behaviour worth knowing: velocity -> level is linear amplitude scaled by `velToLevel`;
 pan is a balance law (centre = unity); chokes fade in 5 ms, mono retrigger 3 ms; loops only apply
@@ -142,6 +175,9 @@ there; check the Actions tab on github.com (or ask the owner) after pushing.
 ./build/KaiaTests_artefacts/Release/KaiaTests                 # all checks must pass
 ./build/KaiaTests_artefacts/Release/KaiaTests --real-data DIR  # optional: real MPC files
 ```
+Tests set `KAIA_CONFIG_DIR` to their work dir, so they never touch the real config folder. For
+`KaiaUiSnapshot` set it yourself.
+
 Real-data layout used so far (not in the repo): `DIR/mpcmaid/test.pgm` (MPCMaid),
 `DIR/vmpc/TEST1|TEST2/*.PGM+*.SND`, `DIR/vmpc/RealMpc2000xl`, `DIR/vmpc/RealMpc3000`
 (VMPC2000XL repo), `DIR/mpc_valet/Reference.xpm`.
@@ -188,3 +224,5 @@ Product "Kaia", manufacturer code `Kaia`, plugin code `Kai1`, VST3/AU bundle id
 * Not implemented: MPC insert effects, LFOs, pitch/filter envelopes, Q-links, warp,
   MPC2000XL decay-switch, per-program output routing, MIDI channel filter.
 * Windows/macOS builds are produced by CI but haven't been tried in a host.
+* Drum-module maps haven't been tried with real hardware yet (TD-10 included).
+* Library: one root folder; program pads are parsed on the message thread when expanded.

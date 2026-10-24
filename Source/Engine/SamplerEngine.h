@@ -38,9 +38,13 @@ public:
     // outputs: kNumOutputs stereo buses (aux buses may point at the main bus). Outputs are added to, not cleared.
     void process (const OutputBus* outputs, int numSamples, const juce::MidiBuffer& midi);
 
-    // Pad audition from the UI (message thread, lock-free)
+    // Pad audition from the UI (message thread, lock-free). Notes are program notes: they bypass the trigger map.
     void auditionNoteOn (int note, int velocity);
     void auditionNoteOff (int note);
+
+    // Plays KitRuntime::preview once the snapshot with this id is active (message thread, lock-free).
+    void startPreview (juce::uint32 previewId);
+    void stopPreview();
     void allSoundOff() noexcept { panicRequested.store (true); }
 
     // Feedback for the UI
@@ -48,6 +52,11 @@ public:
     juce::uint32 getPadHitCount (int pad) const noexcept { return pad >= 0 && pad < kMaxPads ? padHits[(size_t) pad].load (std::memory_order_relaxed) : 0; }
     int getPadVoiceCount (int pad) const noexcept      { return pad >= 0 && pad < kMaxPads ? padVoices[(size_t) pad].load (std::memory_order_relaxed) : 0; }
     juce::uint32 getLastHitPad() const noexcept        { return lastHitPad.load (std::memory_order_relaxed); }
+
+    // Last MIDI note-on received from the host: (sequence << 8) | note, 0 if none yet. For MIDI Learn.
+    juce::uint32 getLastInputNote() const noexcept     { return lastInputNote.load (std::memory_order_relaxed); }
+
+    static constexpr int kPreviewPad = -2;   // Voice::padIndex of library previews
 
 private:
     struct Voice
@@ -62,6 +71,7 @@ private:
         bool stereoSource = false;
 
         int padIndex = -1, note = -1, muteGroup = 0, output = 0;
+        int inputNote = -1;     // the MIDI note that started the voice (its note-off releases it)
         TriggerMode trigger = TriggerMode::OneShot;
         bool keygroup = false;
         bool noteHeld = true;
@@ -100,17 +110,20 @@ private:
         float filterSample (float x, int ch) noexcept;
     };
 
-    struct UiEvent { juce::uint8 on, note, velocity; };
+    enum UiEventType : juce::uint8 { uiNoteOff, uiNoteOn, uiPreviewStart, uiPreviewStop };
+    struct UiEvent { juce::uint8 type, note, velocity; juce::uint32 id; };
 
     void swapRuntimeIfPending();
     void retire (KitRuntime* rt);
     void sweepRetired();
     void handleMidi (const juce::MidiMessage& m);
-    void noteOn (int note, int velocity);
-    void noteOff (int note);
-    void triggerPad (int padIndex, int note, int velocity, int depth);
+    void noteOn (int note, int velocity, bool fromInput);
+    void noteOff (int note, bool fromInput);
+    void triggerPad (int padIndex, int note, int inputNote, int velocity, int depth);
+    void playPreview();
+    void pushUiEvent (const UiEvent& e);
     Voice* allocateVoice();
-    void startVoice (Voice& v, const PadRT& pad, const LayerRT& layer, int padIndex, int note, int velocity);
+    void startVoice (Voice& v, const PadRT& pad, const LayerRT& layer, int padIndex, int note, int inputNote, int velocity);
     void renderVoice (Voice& v, const OutputBus* outputs, int start, int numSamples) noexcept;
     void applyPitchBend() noexcept;
     juce::uint32 nextRandom() noexcept;
@@ -137,11 +150,14 @@ private:
     juce::uint32 rngState = 0x9e3779b9u;
     float pitchBendSemis = 0.0f;
     std::atomic<bool> panicRequested { false };
+    juce::uint32 pendingPreview = 0;          // audio thread: preview waiting for its snapshot
+    juce::uint32 inputNoteSequence = 0;
 
     std::array<std::atomic<juce::uint32>, kMaxPads> padHits {};
     std::array<std::atomic<int>, kMaxPads> padVoices {};
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<juce::uint32> lastHitPad { 0 };
+    std::atomic<juce::uint32> lastInputNote { 0 };
 
     JUCE_DECLARE_NON_COPYABLE (SamplerEngine)
 };

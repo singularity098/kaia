@@ -1,4 +1,5 @@
 #include "LookAndFeel.h"
+#include "../Model/UserFiles.h"
 
 namespace kaia
 {
@@ -8,7 +9,45 @@ juce::Font uiFont (float height, bool bold)
     return juce::Font (juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain));
 }
 
+const std::vector<AccentOption>& accentOptions()
+{
+    static const std::vector<AccentOption> options {
+        { "Blue",    0xff3d8bff },
+        { "Cyan",    0xff2ec4d6 },
+        { "Green",   0xff3fca7e },
+        { "Lime",    0xffa4d63b },
+        { "Amber",   0xffffb627 },
+        { "Orange",  0xffff7a3d },
+        { "Red",     0xffff4f5e },
+        { "Pink",    0xffff5fa8 },
+        { "Purple",  0xffa070ff },
+        { "Silver",  0xffc3c8d2 },
+    };
+    return options;
+}
+
+void setAccentColour (juce::Colour c)
+{
+    Colours::accent = c;
+    Colours::accentDim = c.withMultipliedBrightness (0.5f).withMultipliedSaturation (0.8f);
+}
+
+juce::Colour savedAccentColour()
+{
+    juce::SharedResourcePointer<SharedSettings> settings;
+    auto hex = settings->get().getValue ("accent");
+    if (hex.length() >= 6)
+        return juce::Colour ((juce::uint32) hex.getHexValue64()).withAlpha (1.0f);
+    return juce::Colour (accentOptions().front().argb);
+}
+
 KaiaLookAndFeel::KaiaLookAndFeel()
+{
+    setAccentColour (savedAccentColour());
+    applyColours();
+}
+
+void KaiaLookAndFeel::applyColours()
 {
     setColour (juce::ResizableWindow::backgroundColourId, Colours::background);
     setColour (juce::Label::textColourId, Colours::text);

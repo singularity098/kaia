@@ -19,6 +19,8 @@ public:
 
     std::function<void (int pad)> onPadSelected;
     std::function<void (int pad, juce::Point<int> screenPos)> onPadMenu;
+    std::function<bool (const juce::var&)> isInterestedInDrag;               // library drags
+    std::function<void (int pad, const juce::var&, bool asLayer)> onDrop;
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -35,6 +37,7 @@ private:
     juce::OwnedArray<PadButton> pads;
     std::array<juce::uint32, kMaxPads> lastHits {};
     int dropHighlight = -1;
+    int shownLearnPad = -1;
 };
 
 }

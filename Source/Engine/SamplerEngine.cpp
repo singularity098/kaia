@@ -166,22 +166,33 @@ void SamplerEngine::collectGarbage()
     garbageFifo.finishedRead (n1 + n2);
 }
 
-void SamplerEngine::auditionNoteOn (int note, int velocity)
+void SamplerEngine::pushUiEvent (const UiEvent& e)
 {
     int s1, n1, s2, n2;
     uiFifo.prepareToWrite (1, s1, n1, s2, n2);
     if (n1 > 0)
-        uiEvents[(size_t) s1] = { 1, (juce::uint8) juce::jlimit (0, 127, note), (juce::uint8) juce::jlimit (1, 127, velocity) };
+        uiEvents[(size_t) s1] = e;
     uiFifo.finishedWrite (n1);
+}
+
+void SamplerEngine::auditionNoteOn (int note, int velocity)
+{
+    pushUiEvent ({ uiNoteOn, (juce::uint8) juce::jlimit (0, 127, note), (juce::uint8) juce::jlimit (1, 127, velocity), 0 });
 }
 
 void SamplerEngine::auditionNoteOff (int note)
 {
-    int s1, n1, s2, n2;
-    uiFifo.prepareToWrite (1, s1, n1, s2, n2);
-    if (n1 > 0)
-        uiEvents[(size_t) s1] = { 0, (juce::uint8) juce::jlimit (0, 127, note), 0 };
-    uiFifo.finishedWrite (n1);
+    pushUiEvent ({ uiNoteOff, (juce::uint8) juce::jlimit (0, 127, note), 0, 0 });
+}
+
+void SamplerEngine::startPreview (juce::uint32 previewId)
+{
+    pushUiEvent ({ uiPreviewStart, 0, 0, previewId });
+}
+
+void SamplerEngine::stopPreview()
+{
+    pushUiEvent ({ uiPreviewStop, 0, 0, 0 });
 }
 
 //==============================================================================
@@ -276,9 +287,13 @@ void SamplerEngine::applyPitchBend() noexcept
 void SamplerEngine::handleMidi (const juce::MidiMessage& m)
 {
     if (m.isNoteOn())
-        noteOn (m.getNoteNumber(), m.getVelocity());
+    {
+        auto note = m.getNoteNumber();
+        lastInputNote.store ((++inputNoteSequence << 8) | (juce::uint32) (note & 0x7f), std::memory_order_relaxed);
+        noteOn (note, m.getVelocity(), true);
+    }
     else if (m.isNoteOff())
-        noteOff (m.getNoteNumber());
+        noteOff (m.getNoteNumber(), true);
     else if (m.isPitchWheel())
     {
         auto range = current != nullptr ? current->pitchBendRange : 2.0f;
@@ -305,7 +320,7 @@ void SamplerEngine::handleMidi (const juce::MidiMessage& m)
     }
 }
 
-void SamplerEngine::noteOn (int note, int velocity)
+void SamplerEngine::noteOn (int note, int velocity, bool fromInput)
 {
     if (note < 0 || note > 127)
         return;
@@ -314,23 +329,27 @@ void SamplerEngine::noteOn (int note, int velocity)
     if (current == nullptr)
         return;
 
-    for (auto padIndex : current->padsForNote[(size_t) note])
+    // MIDI input goes through the trigger map; the voice carries the pad's program note so mute
+    // targets keep working, and remembers the input note for its note-off.
+    const auto& pads = fromInput ? current->padsForInput[(size_t) note] : current->padsForNote[(size_t) note];
+    for (auto padIndex : pads)
     {
         auto& pad = current->pads[(size_t) padIndex];
         if (pad.trigger == TriggerMode::NoteOff)
             continue;
-        triggerPad (padIndex, note, velocity, 0);
+        auto programNote = padIndex < kMaxPads && current->padNote[(size_t) padIndex] >= 0 ? current->padNote[(size_t) padIndex] : note;
+        triggerPad (padIndex, programNote, note, velocity, 0);
     }
 }
 
-void SamplerEngine::noteOff (int note)
+void SamplerEngine::noteOff (int note, bool fromInput)
 {
     if (note < 0 || note > 127)
         return;
 
     for (auto& v : voices)
     {
-        if (v.active && v.note == note && v.noteHeld)
+        if (v.active && v.inputNote == note && v.noteHeld)
         {
             v.noteHeld = false;
             if (v.trigger == TriggerMode::NoteOn)
@@ -341,9 +360,13 @@ void SamplerEngine::noteOff (int note)
     if (current == nullptr)
         return;
 
-    for (auto padIndex : current->padsForNote[(size_t) note])
+    const auto& pads = fromInput ? current->padsForInput[(size_t) note] : current->padsForNote[(size_t) note];
+    for (auto padIndex : pads)
         if (current->pads[(size_t) padIndex].trigger == TriggerMode::NoteOff)
-            triggerPad (padIndex, note, lastVelocity[(size_t) note], 0);
+        {
+            auto programNote = padIndex < kMaxPads && current->padNote[(size_t) padIndex] >= 0 ? current->padNote[(size_t) padIndex] : note;
+            triggerPad (padIndex, programNote, note, lastVelocity[(size_t) note], 0);
+        }
 }
 
 SamplerEngine::Voice* SamplerEngine::allocateVoice()
@@ -367,7 +390,7 @@ SamplerEngine::Voice* SamplerEngine::allocateVoice()
     return best;
 }
 
-void SamplerEngine::triggerPad (int padIndex, int note, int velocity, int depth)
+void SamplerEngine::triggerPad (int padIndex, int note, int inputNote, int velocity, int depth)
 {
     if (current == nullptr || padIndex < 0 || padIndex >= (int) current->pads.size())
         return;
@@ -467,7 +490,7 @@ void SamplerEngine::triggerPad (int padIndex, int note, int velocity, int depth)
         auto* v = allocateVoice();
         if (v == nullptr)
             break;
-        startVoice (*v, pad, pad.layers[(size_t) candidates[c]], padIndex, note, velocity);
+        startVoice (*v, pad, pad.layers[(size_t) candidates[c]], padIndex, note, inputNote, velocity);
     }
 
     // "Simult" pads play along
@@ -476,10 +499,34 @@ void SamplerEngine::triggerPad (int padIndex, int note, int velocity, int depth)
             if (t >= 0 && t < 128 && t != note)
                 for (auto other : current->padsForNote[(size_t) t])
                     if (other != padIndex)
-                        triggerPad (other, t, velocity, 1);
+                        triggerPad (other, t, t, velocity, 1);
 }
 
-void SamplerEngine::startVoice (Voice& v, const PadRT& pad, const LayerRT& layer, int padIndex, int note, int velocity)
+void SamplerEngine::playPreview()
+{
+    // Previews are mono: a new one cuts the previous one
+    for (auto& v : voices)
+        if (v.active && v.padIndex == kPreviewPad)
+            v.kill (kMonoFadeSec, sampleRate);
+
+    auto& pad = current->preview;
+    if (pad.numLayers == 0)
+        return;
+
+    constexpr int velocity = 110;
+    int layer = 0;
+    for (int i = 0; i < pad.numLayers; ++i)
+        if (velocity >= pad.layers[(size_t) i].velLow && velocity <= pad.layers[(size_t) i].velHigh)
+        {
+            layer = i;
+            break;
+        }
+
+    if (auto* v = allocateVoice())
+        startVoice (*v, pad, pad.layers[(size_t) layer], kPreviewPad, -1, -1, velocity);
+}
+
+void SamplerEngine::startVoice (Voice& v, const PadRT& pad, const LayerRT& layer, int padIndex, int note, int inputNote, int velocity)
 {
     auto* sd = layer.sample;
     auto sr = sampleRate;
@@ -493,6 +540,7 @@ void SamplerEngine::startVoice (Voice& v, const PadRT& pad, const LayerRT& layer
     v.stereoSource = sd->numChannels > 1;
     v.padIndex = padIndex;
     v.note = note;
+    v.inputNote = inputNote;
     v.muteGroup = pad.muteGroup;
     v.output = pad.output;
     v.trigger = pad.trigger;
@@ -727,12 +775,31 @@ void SamplerEngine::process (const OutputBus* outputs, int numSamples, const juc
         uiFifo.prepareToRead (uiFifo.getNumReady(), s1, n1, s2, n2);
         auto handle = [this] (const UiEvent& e)
         {
-            if (e.on) noteOn (e.note, e.velocity);
-            else      noteOff (e.note);
+            switch (e.type)
+            {
+                case uiNoteOn:       noteOn (e.note, e.velocity, false); break;
+                case uiNoteOff:      noteOff (e.note, false); break;
+                case uiPreviewStart: pendingPreview = e.id; break;
+                case uiPreviewStop:
+                    pendingPreview = 0;
+                    for (auto& v : voices)
+                        if (v.active && v.padIndex == kPreviewPad)
+                            v.kill (kMonoFadeSec, sampleRate);
+                    break;
+                default: break;
+            }
         };
         for (int i = 0; i < n1; ++i) handle (uiEvents[(size_t) (s1 + i)]);
         for (int i = 0; i < n2; ++i) handle (uiEvents[(size_t) (s2 + i)]);
         uiFifo.finishedRead (n1 + n2);
+    }
+
+    // A preview starts once the snapshot that holds its sound is active (ids only increase)
+    if (pendingPreview != 0 && current != nullptr && current->previewId >= pendingPreview)
+    {
+        if (current->previewId == pendingPreview)
+            playPreview();
+        pendingPreview = 0;
     }
 
     auto renderAll = [&] (int start, int length)

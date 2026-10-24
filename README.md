@@ -14,6 +14,11 @@ with Windows and macOS builds produced by CI.
 * Velocity layers, round robin and random layers, choke groups, mono pads,
   one-shot / note-on / note-off triggering, envelopes, filters, tuning, reverse.
 * 17 stereo outputs (Main + Aux 1–16) for multi-track drum mixing.
+* **Electronic drum kits**: pick your module (Roland TD-10 and other V-Drums, Alesis, Yamaha DTX,
+  General MIDI) and its drums play a fixed pad layout; **MIDI Learn** on any pad.
+* **Library browser**: point Kaia at the folder with all your expansions and samples, then load
+  programs or mix and match single pads and samples from different expansions. Save the result
+  as a **preset**; your library files are never modified.
 * Real-time safe engine: no locks or memory allocation on the audio thread, every sample in RAM,
   high-quality windowed-sinc resampling. About 4–5% of one 2.1 GHz core for 50 simultaneous voices.
 
@@ -80,6 +85,40 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   plugin's extra outputs (Reaper: pin connector; Bitwig: add chains per output). LV2 and CLAP
   always expose all 17 outputs. If an aux output is switched off in the host, its pads play through
   Main, so nothing goes silent.
+* **Library** (header): set your library folder once (*Folder…* or *Settings*), and Kaia scans it
+  in the background: every `.xpn`, every folder with programs, and every folder of samples. Expand
+  an expansion to see its programs (expand a program to see its pads) and its samples. With
+  *Click to hear* on, selecting a sample or pad plays it. **Double-click** a program to load it;
+  double-click a sample or pad to put it on the selected pad, or **drag** it onto any pad
+  (hold Shift while dropping a sample to add it as a layer). This is how you mix and match
+  sounds from different expansions. The search box searches programs and samples of the whole
+  library. The scan is cached in the config folder, so it's instant next time.
+* **Presets**: *Open → Save preset…* stores the current kit (all pads, layers and settings) in
+  Kaia's config folder. Presets appear under *Open → Presets* and at the top of the Library.
+  A preset refers to the samples where they are in your library; Kaia never copies, moves or
+  changes library files.
+* **Drum modules** (*Settings → Drum module*): choose your e-drum module and its default notes
+  are mapped to this layout, whatever the program's own note map:
+
+  | | | | |
+  |---|---|---|---|
+  | A13 Crash 1 | A14 Crash 2 | A15 Ride | A16 Ride bell |
+  | A09 Tom 1 | A10 Tom 2 | A11 Tom 3 | A12 Tom 4 |
+  | A05 Snare rim | A06 Cross-stick | A07 Aux | A08 Hi-hat open |
+  | A01 Kick | A02 Snare | A03 Hi-hat closed | A04 Hi-hat pedal |
+
+  Tom rims, cymbal edges and the ride edge play the same pad as the head/bow. Closed and pedal
+  hi-hat cut off the open hi-hat (switchable). Notes the module doesn't send are ignored. The
+  settings page shows each pad's notes and the last note received, to check the connection.
+  Supported: Roland TD-3/6/8/10 and TD-1/02/07/4/9/11/12/15/17/20/25/27/30/50 and VAD,
+  Alesis Nitro/Turbo/Surge/Command/Crimson/Strike/Strata/DM10, Yamaha DTX400–DTX10 and DTX-PRO,
+  and the General MIDI drum map (EFNOTE, Simmons, ATV, Millenium and most others). These are the
+  factory default notes; if you changed your module's note assignments, or a drum plays the
+  wrong pad, use MIDI Learn. Keygroup (melodic) programs always keep their own key ranges.
+* **MIDI Learn**: right-click a pad → *MIDI Learn*, then hit the drum (or key). That note now
+  plays the pad, on top of the module map or the program's notes. *Forget learned notes* is in
+  the same menu and in Settings.
+* **Highlight colour**: *Settings → Highlight colour* (blue by default).
 * **Saving**: the DAW project stores the kit and every pad edit. Samples are referenced from their
   original location, not copied into the project; if you move your library, use **Relink…** and
   point it at the new folder.
@@ -91,6 +130,27 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
 * **Decay** (MPC "decay from start"): the sound fades out over *Decay* right after the attack —
   use it to shorten hits.
 * **AHDSR**: classic envelope with sustain; *Release* starts when the note ends (note-on mode).
+
+## Where Kaia keeps its files
+
+Settings, presets and the library index live in one folder:
+
+* Linux: `~/.config/kaia/` (or `$XDG_CONFIG_HOME/kaia/`)
+* macOS: `~/Library/Application Support/Kaia/`
+* Windows: `%APPDATA%\Kaia\`
+
+`settings.xml` (recent files, library folder, drum module, learned notes, colour),
+`presets/*.kaiapreset`, and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
+they are moved automatically. Kaia never writes anywhere else, and in particular never into your
+sample library or expansion files.
+
+## Latency
+
+Kaia adds **no latency**: it reports zero latency to the host and a hit starts sounding at the
+exact sample position of the MIDI note within the current audio block. Drum-module mapping and
+MIDI Learn are a table lookup on the note; nothing is buffered. What you hear is your audio
+interface's buffer: for playing e-drums live use a small buffer (64–128 samples at 48 kHz, i.e.
+1.3–2.7 ms), which Kaia's low CPU use makes practical.
 
 ## Format support
 
@@ -133,6 +193,9 @@ Set `KAIA_DEBUG=1` in the environment to print diagnostics from the plugin to st
   structure intact, or use **Relink…** to point Kaia at the folder that holds them.
 * **Pads are silent in a multi-out setup**: a pad routed to an aux output plays only there if the
   host has that output enabled. Use *Outputs → All pads to Main* to reset.
+* **E-drum pads play the wrong sound**: check *Settings → Drum module* and that your kit is laid
+  out as in the table above; the settings page shows the last note received. Fix single drums
+  with MIDI Learn.
 * **Plugin doesn't load on an older distro**: the prebuilt binaries need glibc 2.35+; build from
   source instead.
 
