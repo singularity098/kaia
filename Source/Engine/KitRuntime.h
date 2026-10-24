@@ -84,7 +84,9 @@ struct PreviewSound
 };
 
 // triggers: how incoming MIDI notes reach the pads (nullptr = the program's own note map).
+// playLoops: honour sample/layer loops on note-on pads (otherwise every sample plays once).
 std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples,
-                                          const TriggerMap* triggers = nullptr, const PreviewSound* preview = nullptr);
+                                          const TriggerMap* triggers = nullptr, const PreviewSound* preview = nullptr,
+                                          bool playLoops = true);
 
 }

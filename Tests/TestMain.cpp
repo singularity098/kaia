@@ -1152,8 +1152,8 @@ static void testTriggerMap()
         addTonePad (kit, samples, i, 200.0 + 100.0 * i, 0.3);    // A01 200 Hz, A02 300 Hz, ...
 
     TriggerMap td10;
-    td10.moduleId = "roland-td10";
-    CHECK (td10.usesModule() && findDrumModule ("roland-td10")->name == "Roland TD-10", "TD-10 module exists");
+    CHECK (td10.selectModule ("roland-td10") && td10.usesModule() && td10.moduleName() == "Roland TD-10", "TD-10 module exists");
+    CHECK (! td10.isEdited() && ! td10.isCustom(), "factory notes are not an edit");
     for (auto& m : drumModules())
     {
         bool ok = ! m.notes.empty();
@@ -1166,15 +1166,46 @@ static void testTriggerMap()
     auto plays = [&table] (int note) { return table[(size_t) note].size() == 1 ? table[(size_t) note].front() : -1; };
     CHECK (plays (36) == 0, "TD-10 kick (36) -> A01");
     CHECK (plays (38) == 1, "TD-10 snare (38) -> A02");
-    CHECK (plays (42) == 2, "TD-10 closed hi-hat (42) -> A03");
-    CHECK (plays (46) == 7, "TD-10 open hi-hat (46) -> A08");
+    CHECK (plays (42) == 2 && plays (22) == 2, "TD-10 closed hi-hat (42, 22) -> A03");
+    CHECK (table[46] == std::vector<int> ({ 7, 3 }) && table[26] == std::vector<int> ({ 7, 3 }), "TD-10 open hi-hat (46, 26) -> A08 and A04");
     CHECK (plays (44) == 3, "TD-10 pedal hi-hat (44) -> A04");
     CHECK (plays (40) == 4, "TD-10 snare rim (40) -> A05");
-    CHECK (plays (48) == 8 && plays (50) == 8, "TD-10 tom 1 head and rim -> A09");
-    CHECK (plays (41) == 11 && plays (39) == 11, "TD-10 tom 4 head and rim -> A12");
-    CHECK (plays (49) == 12 && plays (51) == 14 && plays (53) == 15, "crash, ride, ride bell");
+    CHECK (plays (41) == 8 && plays (39) == 8, "TD-10 floor tom head and rim -> A09");
+    CHECK (plays (48) == 11 && plays (50) == 11, "TD-10 high tom head and rim -> A12");
+    CHECK (plays (51) == 12 && plays (53) == 13 && plays (57) == 15 && plays (52) == 14, "ride A13, bell A14, crash 2 A16, its edge A15");
+    CHECK (plays (55) == 6 && plays (49) == 6 && plays (10) == 14, "crash 1 -> A07, note 10 -> A15");
     CHECK (table[37].empty() && table[60].empty(), "notes the module doesn't send are ignored");
-    CHECK (td10.notesForPad (kit, 7) == std::vector<int> { 46 }, "notes for the open hi-hat pad");
+    CHECK (td10.notesForPad (kit, 7) == std::vector<int> ({ 26, 46 }), "notes for the open hi-hat pad");
+
+    // Editing the note table
+    {
+        auto edited = td10;
+        edited.moveNoteToZone (51, 15);
+        CHECK (edited.isEdited() && edited.notesForZone (15) == std::vector<int> ({ 57, 51 }) && edited.notesForZone (12) == std::vector<int> { 59 },
+               "moving a note to another pad");
+        edited.setZoneNotes (2, { 42, 22, 21 });
+        edited.removeNote (22, 2);
+        CHECK (edited.notesForZone (2) == std::vector<int> ({ 42, 21 }), "setting and removing a pad's notes");
+        auto back = TriggerMap::fromXml (*edited.toXml());
+        CHECK (back == edited, "edited map XML round trip");
+        edited.resetToFactory();
+        CHECK (edited == td10, "back to the factory notes");
+
+        // Saved custom maps
+        juce::String error;
+        CHECK (CustomDrumMaps::save ("My TD-10", back.notes, error), "save a custom map: " << error);
+        auto customs = CustomDrumMaps::list();
+        CHECK (customs.size() == 1 && customs[0].name == "My TD-10" && customs[0].notes == back.notes, "custom maps listed");
+        TriggerMap custom;
+        CHECK (custom.selectModule ("custom:My TD-10") && custom.isCustom() && custom.moduleName() == "My TD-10"
+                 && custom.notes == back.notes, "select a custom map");
+        TriggerMap restored;
+        restored.restore ("custom:Gone", TriggerMap::notesToString (back.notes));
+        CHECK (restored.usesModule() && restored.notes == back.notes, "a project keeps its custom map even without the file");
+        restored.restore ("custom:Gone", {});
+        CHECK (! restored.usesModule(), "unknown map without notes falls back to the program's notes");
+        CHECK (CustomDrumMaps::remove ("My TD-10") && CustomDrumMaps::list().empty(), "delete a custom map");
+    }
 
     SamplerEngine engine;
     engine.prepare (44100.0);
@@ -1257,6 +1288,64 @@ static void testTriggerMap()
         auto rt = buildRuntime (k3, &s3, &td10);
         CHECK (rt->pads[7].muteGroup == 5 && rt->pads[2].muteGroup == kHiHatChokeGroup, "existing mute groups win");
         CHECK (k3.pads[2].muteGroup == 0, "the kit itself is not modified");
+    }
+
+    // The open hi-hat plays A08 and A04 together: pads hit by the same note don't choke each other
+    {
+        auto k4 = kit;
+        SampleMap s4 = samples;
+        addTonePad (k4, s4, 7, 900.0, 1.0);
+        addTonePad (k4, s4, 3, 500.0, 1.0);
+        reset (engine);
+        engine.setRuntime (buildRuntime (k4, &s4, &td10));
+        out = render (engine, { { 0, 46, 127 } }, 0.5, 44100.0);
+        auto both = rms (out.get (0, 0), 4000, 8000);
+        k4.pads[3].layers.clear();
+        reset (engine);
+        engine.setRuntime (buildRuntime (k4, &s4, &td10));
+        out = render (engine, { { 0, 46, 127 } }, 0.5, 44100.0);
+        auto single = rms (out.get (0, 0), 4000, 8000);
+        CHECK (both > single * 1.2, "open hi-hat layers A08 and A04 (" << both << " vs " << single << ")");
+    }
+
+    // Simult pads stop with the note-off of the note that started them
+    {
+        auto k5 = kit;
+        SampleMap s5 = samples;
+        addTonePad (k5, s5, 0, 200.0, 2.0);
+        addTonePad (k5, s5, 5, 700.0, 2.0);
+        for (int p : { 0, 5 })
+        {
+            k5.pads[(size_t) p].trigger = TriggerMode::NoteOn;
+            k5.pads[(size_t) p].env.adMode = false;
+            k5.pads[(size_t) p].env.releaseMs = 5.0f;
+        }
+        k5.pads[0].simultTargets[0] = k5.pads[5].note;
+        reset (engine);
+        engine.setRuntime (buildRuntime (k5, &s5, &td10));
+        out = render (engine, { { 0, 36, 127 }, { 11025, 36, 0 } }, 1.0, 44100.0);
+        CHECK (rms (out.get (0, 0), 2000, 4000) > 0.1 && rms (out.get (0, 0), 14000, 4000) < 1.0e-4,
+               "note-off releases the simult pad too");
+    }
+
+    // Sample loops only play when enabled
+    {
+        auto k6 = kit;
+        SampleMap s6 = samples;
+        addTonePad (k6, s6, 0, 200.0, 0.2);
+        k6.pads[0].trigger = TriggerMode::NoteOn;
+        k6.pads[0].layers[0].loop = true;
+        for (bool loops : { true, false })
+        {
+            reset (engine);
+            engine.setRuntime (buildRuntime (k6, &s6, &td10, nullptr, loops));
+            out = render (engine, { { 0, 36, 127 } }, 1.0, 44100.0);
+            auto tail = rms (out.get (0, 0), 22050, 4000);
+            if (loops)
+                CHECK (tail > 0.1, "looped sample keeps playing while held");
+            else
+                CHECK (tail < 1.0e-6 && engine.getActiveVoiceCount() == 0, "with loops off the sample plays once (" << tail << ")");
+        }
     }
 
     // Keygroup programs keep their key ranges

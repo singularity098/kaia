@@ -28,6 +28,10 @@ public:
 
         auto r = getLocalBounds().toFloat().reduced (3.0f);
         auto base = loaded ? Colours::padLoaded : Colours::padEmpty;
+        auto themed = padThemeColour (Colours::padTheme, slotInBank);
+        if (! themed.isTransparent())
+            base = loaded ? themed : themed.interpolatedWith (Colours::padEmpty, 0.65f);
+        auto dim = themed.isTransparent() ? Colours::textDim : Colours::text.withAlpha (0.6f);
         if (pad != nullptr && pad->mute)
             base = base.darker (0.3f);
         g.setColour (base);
@@ -53,12 +57,12 @@ public:
             g.fillRoundedRectangle (r, 6.0f);
         }
 
-        g.setColour (dropTarget ? Colours::good : (selected || learning) ? Colours::accent : Colours::outline);
+        g.setColour (dropTarget ? Colours::good : (selected || learning) ? Colours::accent : themed.isTransparent() ? Colours::outline : base.brighter (0.3f));
         g.drawRoundedRectangle (r, 6.0f, dropTarget || selected || learning ? 2.0f : 1.0f);
 
         auto inner = r.reduced (8.0f, 6.0f).toNearestInt();
         g.setFont (uiFont (11.5f, true));
-        g.setColour (selected ? Colours::accent : Colours::textDim);
+        g.setColour (selected ? Colours::accent : dim);
         g.drawText (pad != nullptr && pad->isKeygroup() ? "KG " + juce::String (padIndex + 1) : padName (padIndex),
                     inner.removeFromTop (14), juce::Justification::topLeft);
 
@@ -81,7 +85,7 @@ public:
             else if (pad->note >= 0)
                 noteText = juce::MidiMessage::getMidiNoteName (pad->note, true, true, 3);
             g.setFont (uiFont (11.0f, learning));
-            g.setColour (learning ? Colours::accent : mapped ? Colours::text.withAlpha (0.8f) : Colours::textDim);
+            g.setColour (learning ? Colours::accent : mapped ? Colours::text.withAlpha (0.8f) : dim);
             g.drawText (noteText, getLocalBounds().reduced (11, 9).removeFromTop (14), juce::Justification::topRight);
         }
 
@@ -103,7 +107,7 @@ public:
         for (int i = 0; i < n; ++i)
         {
             auto dot = juce::Rectangle<float> ((float) footer.getX() + (float) i * 8.0f, (float) footer.getCentreY() - 2.5f, 5.0f, 5.0f);
-            g.setColour (pad->layers[(size_t) i].missing ? Colours::error : Colours::textDim);
+            g.setColour (pad->layers[(size_t) i].missing ? Colours::error : dim);
             g.fillEllipse (dot);
         }
 
@@ -115,7 +119,7 @@ public:
         if (pad->layerMode == LayerMode::Cycle && n > 1)  tags << "RR ";
         if (pad->layerMode == LayerMode::Random && n > 1) tags << "RND ";
         g.setFont (uiFont (10.5f, true));
-        g.setColour (Colours::textDim);
+        g.setColour (dim);
         g.drawText (tags.trim(), footer, juce::Justification::centredRight);
     }
 

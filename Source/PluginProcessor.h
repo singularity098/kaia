@@ -87,6 +87,11 @@ public:
     void setTriggerMap (const TriggerMap& map);
     std::vector<int> getInputNotesForPad (int padIndex) const;   // MIDI notes that play this pad
 
+    // Sample loops (WAV loop points, MPC layer loops) on note-on pads. Off by default: drum hits
+    // should never repeat. Shared setting.
+    bool getPlayLoops() const noexcept                  { return playLoops; }
+    void setPlayLoops (bool shouldPlayLoops);
+
     // MIDI Learn: the next note-on from the host is assigned to the pad
     void startMidiLearn (int padIndex);
     void cancelMidiLearn();
@@ -135,6 +140,7 @@ private:
     Kit kit;
     SampleMap samples;
     TriggerMap triggers;
+    bool playLoops = false;
     std::array<std::vector<int>, 128> inputTable;   // triggers resolved against the kit (for the UI)
 
     std::unique_ptr<PreviewSound> preview;

@@ -13,6 +13,18 @@ public:
 
     void paintItem (juce::Graphics& g, int width, int height) override
     {
+        // Texts are measured once: painting runs for every visible row on every scroll step
+        static const juce::Font plainFont = uiFont (13.5f), boldFont = uiFont (13.5f, true),
+                                headingFont = uiFont (11.5f, true), detailFont = uiFont (11.5f);
+        if (! cached)
+        {
+            cached = true;
+            text = isHeading() ? getText().toUpperCase() : getText();
+            detail = getDetail();
+            if (detail.isNotEmpty())
+                detailWidth = juce::GlyphArrangement::getStringWidthInt (detailFont, detail) + 8;
+        }
+
         auto area = juce::Rectangle<int> (width, height);
         if (isSelected())
         {
@@ -21,18 +33,16 @@ public:
         }
 
         auto r = area.reduced (4, 0);
-        auto detail = getDetail();
         if (detail.isNotEmpty())
         {
             g.setColour (Colours::textDim);
-            g.setFont (uiFont (11.5f));
-            auto w = juce::jmin (r.getWidth() / 2, juce::GlyphArrangement::getStringWidthInt (uiFont (11.5f), detail) + 8);
-            g.drawText (detail, r.removeFromRight (w), juce::Justification::centredRight);
+            g.setFont (detailFont);
+            g.drawText (detail, r.removeFromRight (juce::jmin (r.getWidth() / 2, detailWidth)), juce::Justification::centredRight);
         }
 
         g.setColour (isDisabled() ? Colours::textDim : (isSelected() ? Colours::accent : (isHeading() ? Colours::textDim : Colours::text)));
-        g.setFont (isHeading() ? uiFont (11.5f, true) : uiFont (13.5f, isBold()));
-        g.drawText (isHeading() ? getText().toUpperCase() : getText(), r, juce::Justification::centredLeft, true);
+        g.setFont (isHeading() ? headingFont : isBold() ? boldFont : plainFont);
+        g.drawText (text, r, juce::Justification::centredLeft, true);
     }
 
     void itemClicked (const juce::MouseEvent& e) override
@@ -54,11 +64,30 @@ public:
 
     void itemSelectionChanged (bool nowSelected) override
     {
-        if (nowSelected && browser.autoPreview.getToggleState())
+        if (! nowSelected || ! browser.autoPreview.getToggleState())
+            return;
+        // Clicks and touches play on release, so dragging the list to scroll stays silent
+        if (juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown())
+            browser.pendingAudition = getItemIdentifierString();
+        else
             audition();
     }
 
+    // Touch screens on Linux send mouse events, so the list scrolls on any drag: only a drag
+    // that starts sideways (towards the pads) picks the item up.
+    static bool dragIsVertical()
+    {
+        auto source = juce::Desktop::getInstance().getMainMouseSource();
+        auto delta = source.getScreenPosition() - source.getLastMouseDownPosition();
+        return std::abs (delta.y) > std::abs (delta.x);
+    }
+
     LibraryBrowser& browser;
+
+private:
+    bool cached = false;
+    juce::String text, detail;
+    int detailWidth = 0;
 };
 
 //==============================================================================
@@ -78,6 +107,8 @@ public:
 
     juce::var getDragSourceDescription() override
     {
+        if (dragIsVertical())
+            return {};
         auto* o = new juce::DynamicObject();
         o->setProperty ("kaiaLibrary", "sample");
         o->setProperty ("ref", ref().toString());
@@ -142,6 +173,8 @@ public:
 
     juce::var getDragSourceDescription() override
     {
+        if (dragIsVertical())
+            return {};
         auto* o = new juce::DynamicObject();
         o->setProperty ("kaiaLibrary", "pad");
         o->setProperty ("program", location.toString());
@@ -244,7 +277,7 @@ public:
         for (auto& s : pack().samples)
             if (LibraryPack::folderOf (s) == folder)
                 ++n;
-        return juce::String (n);
+        return juce::String (n);      // computed once per item (see Item::paintItem)
     }
 
     bool isHeading() const override             { return kind != SampleFolder; }
@@ -436,6 +469,18 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
     tree.setColour (juce::TreeView::selectedItemBackgroundColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (tree);
 
+    // Scrolling: drag anywhere (touch screens), and the wheel glides instead of jumping. The tree's
+    // own scroll bars are hidden so wheel events reach mouseWheelMove(); scrollBar replaces them.
+    if (auto* vp = tree.getViewport())
+    {
+        vp->setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::all);
+        vp->setScrollBarsShown (false, false, false, false);
+    }
+    scrollBar.setAutoHide (true);
+    scrollBar.addListener (this);
+    addAndMakeVisible (scrollBar);
+    tree.addMouseListener (this, true);
+
     closeButton.onClick = [this] { if (onClose) onClose(); };
     rescanButton.setTooltip ("Scan the library folder again");
     rescanButton.onClick = [this] { library->rescan(); };
@@ -459,6 +504,8 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
 
 LibraryBrowser::~LibraryBrowser()
 {
+    tree.removeMouseListener (this);
+    scrollBar.removeListener (this);
     library->removeChangeListener (this);
     tree.setRootItem (nullptr);
 }
@@ -474,9 +521,11 @@ void LibraryBrowser::visibilityChanged()
     {
         library->ensureScanned();
         refresh();
+        startTimerHz (20);
     }
     else
     {
+        stopTimer();
         processor.stopPreview();
     }
 }
@@ -648,7 +697,108 @@ void LibraryBrowser::resized()
     r.removeFromTop (6);
     hint.setBounds (r.removeFromBottom (20));
     r.removeFromBottom (4);
+    scrollBar.setBounds (r.removeFromRight (10));
+    r.removeFromRight (2);
     tree.setBounds (r);
+    syncScrollBar();
+}
+
+//==============================================================================
+void LibraryBrowser::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    // Arrives from the tree (its scroll bars are hidden, so its viewport passes wheel events up);
+    // the copy delivered to the mouse listener on the tree is ignored.
+    // The tree's item components pass each event up twice (as children and to their listener)
+    auto* vp = tree.getViewport();
+    if (e.eventComponent != this || vp == nullptr || e.mods.isCtrlDown() || e.mods.isCommandDown() || e.mods.isAltDown()
+         || std::exchange (lastWheelTime, e.eventTime) == e.eventTime)
+        return;
+
+    auto maxY = juce::jmax (0, vp->getViewedComponent()->getHeight() - vp->getViewHeight());
+    auto delta = (wheel.isReversed ? -wheel.deltaY : wheel.deltaY) * 14.0f * 18.0f;   // about two rows per wheel notch
+    if (std::abs (delta) < 0.01f)
+        return;
+
+    if (wheel.isSmooth)
+    {
+        // Touchpads already send small, smooth steps
+        scrollTarget = juce::jlimit (0.0, (double) maxY, (double) vp->getViewPositionY() - delta);
+        scrollPosition = scrollTarget;
+        vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (scrollTarget));
+        syncScrollBar();
+        return;
+    }
+
+    // Mouse wheel notches: glide to the new position over a few frames
+    if (! scrollAnimating)
+        scrollPosition = scrollTarget = vp->getViewPositionY();
+    scrollTarget = juce::jlimit (0.0, (double) maxY, scrollTarget - delta);
+    if (! scrollAnimating)
+    {
+        scrollAnimating = true;
+        scrollAnimator.startTimerHz (60);
+    }
+}
+
+void LibraryBrowser::animateScroll()
+{
+    auto* vp = tree.getViewport();
+    if (vp == nullptr || std::abs (scrollTarget - scrollPosition) < 0.5)
+    {
+        if (vp != nullptr)
+            vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (scrollTarget));
+        scrollAnimating = false;
+        scrollAnimator.stopTimer();
+        syncScrollBar();
+        return;
+    }
+    scrollPosition += (scrollTarget - scrollPosition) * 0.32;
+    vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (scrollPosition));
+    syncScrollBar();
+}
+
+void LibraryBrowser::syncScrollBar()
+{
+    auto* vp = tree.getViewport();
+    if (vp == nullptr || vp->getViewedComponent() == nullptr)
+        return;
+    // (ScrollBar notifies its listeners asynchronously, so changes made here must not notify)
+    scrollBar.setRangeLimits (0.0, (double) vp->getViewedComponent()->getHeight(), juce::dontSendNotification);
+    scrollBar.setCurrentRange ((double) vp->getViewPositionY(), (double) vp->getViewHeight(), juce::dontSendNotification);
+    scrollBar.setSingleStepSize (24.0);
+}
+
+void LibraryBrowser::scrollBarMoved (juce::ScrollBar*, double newRangeStart)
+{
+    if (auto* vp = tree.getViewport())
+    {
+        scrollAnimating = false;
+        scrollAnimator.stopTimer();
+        scrollPosition = scrollTarget = newRangeStart;
+        vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (newRangeStart));
+    }
+}
+
+void LibraryBrowser::mouseDrag (const juce::MouseEvent&)
+{
+    // Dragging the list to scroll
+    scrollAnimating = false;
+    scrollAnimator.stopTimer();
+    syncScrollBar();
+}
+
+void LibraryBrowser::mouseUp (const juce::MouseEvent& e)
+{
+    auto pending = std::exchange (pendingAudition, juce::String());
+    if (pending.isNotEmpty() && ! e.mouseWasDraggedSinceMouseDown())
+        if (auto* item = dynamic_cast<Item*> (tree.findItemFromIdentifierString (pending)))
+            item->audition();
+}
+
+void LibraryBrowser::timerCallback()
+{
+    // Keeps the scroll bar in step with drag-scrolling momentum, opening folders and so on
+    syncScrollBar();
 }
 
 void LibraryBrowser::paint (juce::Graphics& g)

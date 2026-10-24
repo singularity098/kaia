@@ -55,6 +55,7 @@ public:
 
     // Last MIDI note-on received from the host: (sequence << 8) | note, 0 if none yet. For MIDI Learn.
     juce::uint32 getLastInputNote() const noexcept     { return lastInputNote.load (std::memory_order_relaxed); }
+    int getLastInputVelocity() const noexcept          { return lastInputVelocity.load (std::memory_order_relaxed); }
 
     static constexpr int kPreviewPad = -2;   // Voice::padIndex of library previews
 
@@ -152,12 +153,14 @@ private:
     std::atomic<bool> panicRequested { false };
     juce::uint32 pendingPreview = 0;          // audio thread: preview waiting for its snapshot
     juce::uint32 inputNoteSequence = 0;
+    juce::uint64 eventFirstSerial = 0;        // voices started by the current note event have serials above this
 
     std::array<std::atomic<juce::uint32>, kMaxPads> padHits {};
     std::array<std::atomic<int>, kMaxPads> padVoices {};
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<juce::uint32> lastHitPad { 0 };
     std::atomic<juce::uint32> lastInputNote { 0 };
+    std::atomic<int> lastInputVelocity { 0 };
 
     JUCE_DECLARE_NON_COPYABLE (SamplerEngine)
 };

@@ -18,6 +18,10 @@ namespace UserFiles
     juce::File settingsFile();          // settings.xml
     juce::File presetsDirectory();      // presets/
     juce::File libraryCacheFile();      // library-index.xml
+    juce::File drumMapsDirectory();     // drum-maps/ (custom drum module maps)
+
+    // A file name made from something the user typed (never empty, no path separators)
+    juce::String safeFileName (const juce::String& name);
 
     // Kaia 1.0 used JUCE's default location (~/Kaia/Kaia.settings on Linux). Moves that file
     // into the config directory and removes the old folder if nothing else is in it.

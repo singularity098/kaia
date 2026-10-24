@@ -34,6 +34,25 @@ const std::vector<AccentOption>& accentOptions();     // the first one is the de
 void setAccentColour (juce::Colour c);
 juce::Colour savedAccentColour();                     // from the settings file
 
+// Pad colour themes: muted colours that run as a gradient across the 16 pads of a bank, from A01
+// (bottom left) to A16 (top right). Chosen independently of the highlight colour.
+struct PadTheme
+{
+    const char* name;
+    float hueFrom, hueTo;          // 0..1, hueTo may pass 1 to wrap around
+    float saturation;
+    float brightnessFrom, brightnessTo;
+};
+
+const std::vector<PadTheme>& padThemes();             // the first one ("Plain") has no colour
+int savedPadTheme();                                  // index into padThemes(), from the settings file
+juce::Colour padThemeColour (int theme, int padInBank);   // transparent for "Plain"
+
+namespace Colours
+{
+    inline int padTheme = 0;                          // current theme (message thread only)
+}
+
 class KaiaLookAndFeel : public juce::LookAndFeel_V4
 {
 public:

@@ -27,6 +27,7 @@ juce::File UserFiles::configDirectory()
 juce::File UserFiles::settingsFile()       { return configDirectory().getChildFile ("settings.xml"); }
 juce::File UserFiles::presetsDirectory()   { return configDirectory().getChildFile ("presets"); }
 juce::File UserFiles::libraryCacheFile()   { return configDirectory().getChildFile ("library-index.xml"); }
+juce::File UserFiles::drumMapsDirectory()  { return configDirectory().getChildFile ("drum-maps"); }
 
 bool UserFiles::isInsideConfigDirectory (const juce::File& f)
 {
@@ -93,18 +94,15 @@ juce::PropertiesFile& SharedSettings::get()
     return *props;
 }
 
-//==============================================================================
-namespace
+juce::String UserFiles::safeFileName (const juce::String& name)
 {
-    juce::String safeFileName (const juce::String& name)
-    {
-        auto s = juce::File::createLegalFileName (name.trim()).replaceCharacters ("/\\", "--").trim();
-        while (s.startsWithChar ('.'))
-            s = s.substring (1);
-        return s.isEmpty() ? juce::String ("Preset") : s.substring (0, 120);
-    }
+    auto s = juce::File::createLegalFileName (name.trim()).replaceCharacters ("/\\", "--").trim();
+    while (s.startsWithChar ('.'))
+        s = s.substring (1);
+    return s.isEmpty() ? juce::String ("Preset") : s.substring (0, 120);
 }
 
+//==============================================================================
 bool Presets::isPresetFile (const juce::File& file)
 {
     return file.hasFileExtension (kExtension);
@@ -130,7 +128,7 @@ std::vector<Presets::Info> Presets::list()
 
 juce::File Presets::fileFor (const juce::String& presetName)
 {
-    return UserFiles::presetsDirectory().getChildFile (safeFileName (presetName) + kExtension);
+    return UserFiles::presetsDirectory().getChildFile (UserFiles::safeFileName (presetName) + kExtension);
 }
 
 bool Presets::save (const Kit& kit, const juce::String& presetName, juce::String& error, juce::File* savedAs)

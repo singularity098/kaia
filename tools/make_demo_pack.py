@@ -11,11 +11,39 @@ import io
 import struct
 import sys
 import zipfile
+import zlib
 
 import numpy as np
 
 RATE = 44100
 rng = np.random.default_rng(7)
+
+
+def png_bytes(rgb):
+    """Encodes an (h, w, 3) uint8 array as PNG."""
+    h, w, _ = rgb.shape
+    raw = b''.join(b'\x00' + rgb[y].tobytes() for y in range(h))
+
+    def chunk(tag, body):
+        return struct.pack('>I', len(body)) + tag + body + struct.pack('>I', zlib.crc32(tag + body) & 0xffffffff)
+
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))
+
+
+def cover_art(size=256):
+    """Expansion artwork: a 4x4 pad grid in a blue-to-violet gradient on near black."""
+    img = np.zeros((size, size, 3), np.float64)
+    img[:] = (16, 18, 22)
+    margin, gap = size // 10, size // 40
+    cell = (size - 2 * margin - 3 * gap) // 4
+    a, b = np.array((61, 139, 255)), np.array((160, 112, 255))
+    for row in range(4):
+        for col in range(4):
+            t = (col + (3 - row)) / 6.0
+            y, x = margin + row * (cell + gap), margin + col * (cell + gap)
+            img[y:y + cell, x:x + cell] = a + (b - a) * t
+    return png_bytes(img.astype(np.uint8))
 
 
 def wav_bytes(data, rate=RATE):
@@ -264,8 +292,10 @@ def main(path):
   <type>drum</type>
   <priority>50</priority>
   <description>Synthesized drums for checking a Kaia installation.</description>
+  <img>cover.png</img>
 </expansion>
 """)
+        z.writestr('cover.png', cover_art())
         for name, data in samples.items():
             z.writestr(f'[Samples]/{name}.WAV', wav_bytes(data))
         z.writestr('Kaia Demo Kit.xpm', program_xml('Kaia Demo Kit', kit))

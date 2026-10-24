@@ -15,7 +15,8 @@ with Windows and macOS builds produced by CI.
   one-shot / note-on / note-off triggering, envelopes, filters, tuning, reverse.
 * 17 stereo outputs (Main + Aux 1–16) for multi-track drum mixing.
 * **Electronic drum kits**: pick your module (Roland TD-10 and other V-Drums, Alesis, Yamaha DTX,
-  General MIDI) and its drums play a fixed pad layout; **MIDI Learn** on any pad.
+  General MIDI) and its drums play a fixed pad layout; edit the note map and save it as your own;
+  **MIDI Learn** on any pad. The header shows every incoming MIDI note and its velocity.
 * **Library browser**: point Kaia at the folder with all your expansions and samples, then load
   programs or mix and match single pads and samples from different expansions. Save the result
   as a **preset**; your library files are never modified.
@@ -102,23 +103,43 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
 
   | | | | |
   |---|---|---|---|
-  | A13 Crash 1 | A14 Crash 2 | A15 Ride | A16 Ride bell |
-  | A09 Tom 1 | A10 Tom 2 | A11 Tom 3 | A12 Tom 4 |
-  | A05 Snare rim | A06 Cross-stick | A07 Aux | A08 Hi-hat open |
+  | A13 Ride | A14 Ride bell | A15 Crash 2 edge | A16 Crash 2 |
+  | A09 Tom 4 (floor) | A10 Tom 3 | A11 Tom 2 | A12 Tom 1 (high) |
+  | A05 Snare rim | A06 Cross-stick | A07 Crash 1 | A08 Hi-hat open |
   | A01 Kick | A02 Snare | A03 Hi-hat closed | A04 Hi-hat pedal |
 
-  Tom rims, cymbal edges and the ride edge play the same pad as the head/bow. Closed and pedal
-  hi-hat cut off the open hi-hat (switchable). Notes the module doesn't send are ignored. The
-  settings page shows each pad's notes and the last note received, to check the connection.
+  Tom rims and the ride edge play the same pad as the head/bow. Roland and Alesis hi-hat edges
+  (22 closed, 26 open) play the closed/open hi-hat pads, and the open hi-hat notes (46, 26) play
+  both A08 and A04, so an open hi-hat can be layered from two pads. Closed and pedal hi-hat cut
+  off the open hi-hat (switchable); pads hit by the same note never cut each other. Notes the
+  module doesn't send are ignored. Roland TD-10 example: 36 kick, 38 snare, 40 rim, toms 41/39 →
+  A09 up to 48/50 → A12, 42/22 closed hi-hat, 46/26 open hi-hat, 44 pedal, 49/55 crash 1 (A07),
+  51/59 ride (A13), 53 bell (A14), 52 and 10 → A15, 57 → A16.
   Supported: Roland TD-3/6/8/10 and TD-1/02/07/4/9/11/12/15/17/20/25/27/30/50 and VAD,
   Alesis Nitro/Turbo/Surge/Command/Crimson/Strike/Strata/DM10, Yamaha DTX400–DTX10 and DTX-PRO,
   and the General MIDI drum map (EFNOTE, Simmons, ATV, Millenium and most others). These are the
-  factory default notes; if you changed your module's note assignments, or a drum plays the
-  wrong pad, use MIDI Learn. Keygroup (melodic) programs always keep their own key ranges.
+  factory default notes. Keygroup (melodic) programs always keep their own key ranges.
+* **Your own drum maps**: the settings page shows which notes play each pad and the last note
+  received. Click a pad there to *Learn* a note (hit the drum), type its notes, or remove them;
+  a note can play several pads. *Save as custom map…* stores the result under your own name in
+  the config folder (`drum-maps/`); it then appears under *My drum maps* in the module list.
+  *Restore factory notes* undoes edits to a built-in module. Projects store the map they use,
+  so they play the same on another computer.
 * **MIDI Learn**: right-click a pad → *MIDI Learn*, then hit the drum (or key). That note now
   plays the pad, on top of the module map or the program's notes. *Forget learned notes* is in
   the same menu and in Settings.
 * **Highlight colour**: *Settings → Highlight colour* (blue by default).
+* **Pad colours**: *Settings → Pad colours* tints the pads with a soft gradient that runs from A01
+  to A16 (blue, cyan, green, ..., spectrum, ocean, dusk, forest), independently of the highlight
+  colour. *Plain* (the default) keeps them neutral.
+* **Sample loops**: off by default (*Settings → Playback*), so every hit plays its sample once.
+  Some samples carry loop points; with *Play sample loops* on, pads in note-on mode repeat them
+  for as long as the note is held.
+* **Touch screens**: drag lists (library, programs, settings) with a finger to scroll; drag a
+  sample or pad sideways onto the pads to use it. Library items play when you lift your finger,
+  so scrolling stays silent. The *Play* button under the waveform plays the selected pad.
+* **Header**: the open expansion's artwork (click it for its program list), the last MIDI note
+  received with its velocity (it flashes on every hit), and a link to this GitHub page.
 * **Saving**: the DAW project stores the kit and every pad edit. Samples are referenced from their
   original location, not copied into the project; if you move your library, use **Relink…** and
   point it at the new folder.
@@ -139,8 +160,8 @@ Settings, presets and the library index live in one folder:
 * macOS: `~/Library/Application Support/Kaia/`
 * Windows: `%APPDATA%\Kaia\`
 
-`settings.xml` (recent files, library folder, drum module, learned notes, colour),
-`presets/*.kaiapreset`, and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
+`settings.xml` (recent files, library folder, drum module, learned notes, colours, loops),
+`presets/*.kaiapreset`, `drum-maps/*.kaiamap` (your own drum maps), and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
 they are moved automatically. Kaia never writes anywhere else, and in particular never into your
 sample library or expansion files.
 
@@ -194,8 +215,11 @@ Set `KAIA_DEBUG=1` in the environment to print diagnostics from the plugin to st
 * **Pads are silent in a multi-out setup**: a pad routed to an aux output plays only there if the
   host has that output enabled. Use *Outputs → All pads to Main* to reset.
 * **E-drum pads play the wrong sound**: check *Settings → Drum module* and that your kit is laid
-  out as in the table above; the settings page shows the last note received. Fix single drums
-  with MIDI Learn.
+  out as in the table above; the header and the settings page show the last note received.
+  Fix single drums by clicking the pad on the settings page (or with MIDI Learn).
+* **A sound keeps repeating and the voice count climbs**: the sample has loop points and the pad
+  is in note-on mode. Loops are off by default; check *Settings → Playback*. *Stop* silences
+  everything.
 * **Plugin doesn't load on an older distro**: the prebuilt binaries need glibc 2.35+; build from
   source instead.
 

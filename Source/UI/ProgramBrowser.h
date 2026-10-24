@@ -38,7 +38,6 @@ private:
     juce::TextEditor search;
     juce::ListBox list;
     juce::TextButton closeButton { "Done" };
-    juce::Image cover;
     std::vector<Row> rows;
     bool updating = false;
     juce::Rectangle<int> headerArea;

@@ -41,9 +41,60 @@ juce::Colour savedAccentColour()
     return juce::Colour (accentOptions().front().argb);
 }
 
+const std::vector<PadTheme>& padThemes()
+{
+    // Hues follow the highlight colours; gradients run dark to light, A01 to A16
+    static const std::vector<PadTheme> themes {
+        { "Plain",    0.0f,   0.0f,   0.0f,  0.0f,  0.0f  },
+        { "Blue",     0.56f,  0.63f,  0.36f, 0.22f, 0.38f },
+        { "Cyan",     0.47f,  0.54f,  0.36f, 0.21f, 0.36f },
+        { "Green",    0.36f,  0.44f,  0.32f, 0.20f, 0.35f },
+        { "Lime",     0.19f,  0.27f,  0.34f, 0.20f, 0.35f },
+        { "Amber",    0.09f,  0.14f,  0.38f, 0.22f, 0.38f },
+        { "Orange",   0.03f,  0.09f,  0.38f, 0.22f, 0.38f },
+        { "Red",      0.96f,  1.02f,  0.36f, 0.22f, 0.37f },
+        { "Pink",     0.88f,  0.95f,  0.32f, 0.23f, 0.38f },
+        { "Purple",   0.70f,  0.78f,  0.34f, 0.23f, 0.39f },
+        { "Silver",   0.60f,  0.60f,  0.06f, 0.20f, 0.38f },
+        { "Spectrum", 0.0f,   0.83f,  0.30f, 0.30f, 0.30f },
+        { "Ocean",    0.62f,  0.42f,  0.36f, 0.22f, 0.36f },
+        { "Dusk",     0.72f,  1.08f,  0.34f, 0.22f, 0.36f },
+        { "Forest",   0.40f,  0.15f,  0.30f, 0.20f, 0.34f },
+    };
+    return themes;
+}
+
+int savedPadTheme()
+{
+    juce::SharedResourcePointer<SharedSettings> settings;
+    auto name = settings->get().getValue ("padTheme");
+    auto& themes = padThemes();
+    for (int i = 0; i < (int) themes.size(); ++i)
+        if (name == themes[(size_t) i].name)
+            return i;
+    return 0;
+}
+
+juce::Colour padThemeColour (int theme, int padInBank)
+{
+    auto& themes = padThemes();
+    if (theme <= 0 || theme >= (int) themes.size())
+        return juce::Colours::transparentBlack;
+
+    // Diagonal gradient: A01 (bottom left) = 0, A16 (top right) = 1
+    auto& t = themes[(size_t) theme];
+    auto col = padInBank % 4, row = padInBank / 4;
+    auto pos = (float) (col + row) / 6.0f;
+    auto hue = t.hueFrom + (t.hueTo - t.hueFrom) * pos;
+    hue -= std::floor (hue);
+    auto brightness = t.brightnessFrom + (t.brightnessTo - t.brightnessFrom) * pos;
+    return juce::Colour::fromHSV (hue, t.saturation, brightness, 1.0f);
+}
+
 KaiaLookAndFeel::KaiaLookAndFeel()
 {
     setAccentColour (savedAccentColour());
+    Colours::padTheme = savedPadTheme();
     applyColours();
 }
 

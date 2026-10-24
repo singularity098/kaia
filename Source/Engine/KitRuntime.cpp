@@ -5,7 +5,7 @@ namespace kaia
 
 namespace
 {
-    void buildPad (const Pad& src, PadRT& dst, const SampleMap* samples, bool audible, std::vector<SampleDataPtr>& keepAlive)
+    void buildPad (const Pad& src, PadRT& dst, const SampleMap* samples, bool audible, bool playLoops, std::vector<SampleDataPtr>& keepAlive)
     {
         dst.layerMode  = src.layerMode;
         dst.trigger    = src.trigger;
@@ -79,7 +79,7 @@ namespace
             }
 
             // Loops only make sense while a note is held
-            if (src.trigger == TriggerMode::NoteOn)
+            if (src.trigger == TriggerMode::NoteOn && playLoops)
             {
                 if (layer.loop)
                 {
@@ -101,7 +101,8 @@ namespace
     }
 }
 
-std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples, const TriggerMap* triggers, const PreviewSound* preview)
+std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* samples, const TriggerMap* triggers, const PreviewSound* preview,
+                                          bool playLoops)
 {
     auto rt = std::make_unique<KitRuntime>();
     rt->gain = (float) dbToGain (kit.volumeDb);
@@ -121,7 +122,7 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
     {
         auto& src = kit.pads[i];
         auto& dst = rt->pads[i];
-        buildPad (src, dst, samples, ! src.mute && (! anySolo || src.solo), rt->keepAlive);
+        buildPad (src, dst, samples, ! src.mute && (! anySolo || src.solo), playLoops, rt->keepAlive);
 
         if (i < (size_t) kMaxPads)
             rt->padNote[i] = src.isKeygroup() ? -1 : src.note;
@@ -167,7 +168,7 @@ std::unique_ptr<KitRuntime> buildRuntime (const Kit& kit, const SampleMap* sampl
         pad.noteLow = pad.noteHigh = -1;
         pad.output = 0;
         pad.muteGroup = 0;
-        buildPad (pad, rt->preview, &preview->samples, true, rt->keepAlive);
+        buildPad (pad, rt->preview, &preview->samples, true, false, rt->keepAlive);
         rt->previewId = preview->id;
     }
 

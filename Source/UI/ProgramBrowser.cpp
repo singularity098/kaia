@@ -17,6 +17,8 @@ ProgramBrowser::ProgramBrowser (KaiaProcessor& p) : processor (p)
     list.setRowHeight (26);
     list.setColour (juce::ListBox::backgroundColourId, Colours::panel);
     list.setWantsKeyboardFocus (true);
+    // Touch screens on Linux deliver mouse events: let any drag scroll (rows load on release)
+    list.getViewport()->setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::all);
     addAndMakeVisible (list);
 
     closeButton.onClick = [this] { if (onClose) onClose(); };
@@ -27,9 +29,6 @@ ProgramBrowser::ProgramBrowser (KaiaProcessor& p) : processor (p)
 
 void ProgramBrowser::refresh()
 {
-    auto& info = processor.getPackInfo();
-    cover = info.image.isEmpty() ? juce::Image()
-                                 : juce::ImageFileFormat::loadFrom (info.image.getData(), info.image.getSize());
     rebuildRows();
     repaint();
 }
@@ -150,13 +149,7 @@ void ProgramBrowser::paint (juce::Graphics& g)
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
 
     auto& info = processor.getPackInfo();
-    auto h = headerArea;
-    if (cover.isValid())
-    {
-        auto c = h.removeFromLeft (72);
-        g.drawImage (cover, c.toFloat(), juce::RectanglePlacement::centred);
-        h.removeFromLeft (10);
-    }
+    auto h = headerArea;     // the pack's artwork is shown in the editor's header
     h.removeFromRight (72);
 
     g.setColour (Colours::text);

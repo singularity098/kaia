@@ -289,6 +289,7 @@ void SamplerEngine::handleMidi (const juce::MidiMessage& m)
     if (m.isNoteOn())
     {
         auto note = m.getNoteNumber();
+        lastInputVelocity.store (m.getVelocity(), std::memory_order_relaxed);
         lastInputNote.store ((++inputNoteSequence << 8) | (juce::uint32) (note & 0x7f), std::memory_order_relaxed);
         noteOn (note, m.getVelocity(), true);
     }
@@ -330,7 +331,9 @@ void SamplerEngine::noteOn (int note, int velocity, bool fromInput)
         return;
 
     // MIDI input goes through the trigger map; the voice carries the pad's program note so mute
-    // targets keep working, and remembers the input note for its note-off.
+    // targets keep working, and remembers the input note for its note-off. Pads played by the
+    // same note layer: they don't choke each other.
+    eventFirstSerial = voiceSerial;
     const auto& pads = fromInput ? current->padsForInput[(size_t) note] : current->padsForNote[(size_t) note];
     for (auto padIndex : pads)
     {
@@ -360,6 +363,7 @@ void SamplerEngine::noteOff (int note, bool fromInput)
     if (current == nullptr)
         return;
 
+    eventFirstSerial = voiceSerial;
     const auto& pads = fromInput ? current->padsForInput[(size_t) note] : current->padsForNote[(size_t) note];
     for (auto padIndex : pads)
         if (current->pads[(size_t) padIndex].trigger == TriggerMode::NoteOff)
@@ -408,7 +412,7 @@ void SamplerEngine::triggerPad (int padIndex, int note, int inputNote, int veloc
     // Mute groups and mute targets cut off other pads (hi-hat choke)
     for (auto& v : voices)
     {
-        if (! v.active || v.killing)
+        if (! v.active || v.killing || v.serial > eventFirstSerial)
             continue;
         bool sameVoicePad = v.padIndex == padIndex && v.owner == current;
         if (! sameVoicePad && pad.muteGroup > 0 && v.muteGroup == pad.muteGroup)
@@ -499,7 +503,7 @@ void SamplerEngine::triggerPad (int padIndex, int note, int inputNote, int veloc
             if (t >= 0 && t < 128 && t != note)
                 for (auto other : current->padsForNote[(size_t) t])
                     if (other != padIndex)
-                        triggerPad (other, t, t, velocity, 1);
+                        triggerPad (other, t, inputNote, velocity, 1);   // released by the same note-off
 }
 
 void SamplerEngine::playPreview()

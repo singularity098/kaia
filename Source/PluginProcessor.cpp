@@ -89,6 +89,7 @@ KaiaProcessor::KaiaProcessor()
     masterParam = parameters.getRawParameterValue ("master");
     kit = Kit::makeEmpty();
     triggers = defaultTriggerMap();
+    playLoops = settings->get().getBoolValue ("playLoops", false);
     cachedTriggerXml = triggers.toXml()->toString();
     loader = std::make_unique<LoaderThread>();
     rebuildRuntime();
@@ -218,7 +219,7 @@ void KaiaProcessor::timerCallback()
 
 void KaiaProcessor::rebuildRuntime()
 {
-    engine.setRuntime (buildRuntime (kit, &samples, &triggers, preview.get()));
+    engine.setRuntime (buildRuntime (kit, &samples, &triggers, preview.get(), playLoops));
     inputTable = triggers.resolve (kit);
     stateDirty = true;
     sendChangeMessage();
@@ -230,9 +231,7 @@ TriggerMap KaiaProcessor::defaultTriggerMap()
     juce::SharedResourcePointer<SharedSettings> shared;
     auto& props = shared->get();
     TriggerMap m;
-    m.moduleId = props.getValue ("drumModule");
-    if (findDrumModule (m.moduleId) == nullptr)
-        m.moduleId = {};
+    m.restore (props.getValue ("drumModule"), props.getValue ("drumNotes"));
     m.hiHatChoke = props.getBoolValue ("hiHatChoke", true);
     m.learnedFromString (props.getValue ("learnedNotes"));
     return m;
@@ -242,6 +241,8 @@ void KaiaProcessor::saveTriggerMapAsDefault()
 {
     auto& props = settings->get();
     props.setValue ("drumModule", triggers.moduleId);
+    // Only edited tables are stored, so built-in modules pick up improved factory notes
+    props.setValue ("drumNotes", triggers.isEdited() || triggers.isCustom() ? TriggerMap::notesToString (triggers.notes) : juce::String());
     props.setValue ("hiHatChoke", triggers.hiHatChoke);
     props.setValue ("learnedNotes", triggers.learnedToString());
     props.saveIfNeeded();
@@ -255,6 +256,17 @@ void KaiaProcessor::setTriggerMap (const TriggerMap& map)
         cachedTriggerXml = triggers.toXml()->toString();
     }
     saveTriggerMapAsDefault();
+    rebuildRuntime();
+}
+
+void KaiaProcessor::setPlayLoops (bool shouldPlayLoops)
+{
+    if (playLoops == shouldPlayLoops)
+        return;
+    playLoops = shouldPlayLoops;
+    auto& props = settings->get();
+    props.setValue ("playLoops", playLoops);
+    props.saveIfNeeded();
     rebuildRuntime();
 }
 
@@ -932,7 +944,7 @@ void KaiaProcessor::setStateInformation (const void* data, int sizeInBytes)
     auto result = KitLoader::reloadKit (Kit::fromXml (*kitXml));
     if (juce::SystemStats::getEnvironmentVariable ("KAIA_DEBUG", {}).isNotEmpty())
         std::cerr << "[Kaia] setState: kit " << result.kit.name << " samples=" << result.samples.size() << " counted=" << result.kit.countSamples() << " missing=" << result.kit.countMissing() << " warnings=" << result.warnings.joinIntoString ("; ") << std::endl;
-    engine.setRuntime (buildRuntime (result.kit, &result.samples, &restoredTriggers));
+    engine.setRuntime (buildRuntime (result.kit, &result.samples, &restoredTriggers, nullptr, playLoops));
 
     auto apply = [this, result = std::move (result), savedPad, savedBank, pack, restoredTriggers]() mutable
     {

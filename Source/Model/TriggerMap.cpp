@@ -1,4 +1,5 @@
 #include "TriggerMap.h"
+#include "UserFiles.h"
 
 namespace kaia
 {
@@ -13,16 +14,16 @@ juce::String drumZoneName (DrumZone zone)
         case DrumZone::HiHatPedal:  return "Hi-hat pedal";
         case DrumZone::SnareRim:    return "Snare rim";
         case DrumZone::CrossStick:  return "Cross-stick";
-        case DrumZone::Aux:         return "Aux / percussion";
-        case DrumZone::HiHatOpen:   return "Hi-hat open";
-        case DrumZone::Tom1:        return "Tom 1";
-        case DrumZone::Tom2:        return "Tom 2";
-        case DrumZone::Tom3:        return "Tom 3";
-        case DrumZone::Tom4:        return "Tom 4";
         case DrumZone::Crash1:      return "Crash 1";
-        case DrumZone::Crash2:      return "Crash 2";
+        case DrumZone::HiHatOpen:   return "Hi-hat open";
+        case DrumZone::Tom4:        return "Tom 4 (floor)";
+        case DrumZone::Tom3:        return "Tom 3";
+        case DrumZone::Tom2:        return "Tom 2";
+        case DrumZone::Tom1:        return "Tom 1 (high)";
         case DrumZone::Ride:        return "Ride";
         case DrumZone::RideBell:    return "Ride bell";
+        case DrumZone::Crash2Edge:  return "Crash 2 edge";
+        case DrumZone::Crash2:      return "Crash 2";
         case DrumZone::NumZones:    break;
     }
     return {};
@@ -37,58 +38,65 @@ int drumZonePad (DrumZone zone)
 namespace
 {
     using Z = DrumZone;
-    using NoteTable = std::vector<std::pair<int, DrumZone>>;
 
-    // Roland V-Drums before the TD-12: one zone per hi-hat state, rims on their own notes.
-    // Tom rims, cymbal edges and the ride edge play the same pad as the head/bow.
-    NoteTable rolandClassic()
+    // Roland V-Drums before the TD-12 (TD-3 .. TD-10). Tom rims and the ride edge play the same
+    // pad as the head/bow; crash 2's edge has its own pad. Hi-hat edges send 22 (closed) and
+    // 26 (open); the open hi-hat also plays the pedal pad.
+    DrumNoteTable rolandClassic()
     {
         return { { 36, Z::Kick }, { 38, Z::Snare }, { 40, Z::SnareRim },
                  { 48, Z::Tom1 }, { 50, Z::Tom1 }, { 45, Z::Tom2 }, { 47, Z::Tom2 },
                  { 43, Z::Tom3 }, { 58, Z::Tom3 }, { 41, Z::Tom4 }, { 39, Z::Tom4 },
-                 { 42, Z::HiHatClosed }, { 46, Z::HiHatOpen }, { 44, Z::HiHatPedal },
-                 { 49, Z::Crash1 }, { 55, Z::Crash1 }, { 57, Z::Crash2 }, { 52, Z::Crash2 },
+                 { 42, Z::HiHatClosed }, { 22, Z::HiHatClosed },
+                 { 46, Z::HiHatOpen }, { 46, Z::HiHatPedal }, { 26, Z::HiHatOpen }, { 26, Z::HiHatPedal },
+                 { 44, Z::HiHatPedal },
+                 { 49, Z::Crash1 }, { 55, Z::Crash1 }, { 57, Z::Crash2 }, { 52, Z::Crash2Edge },
                  { 51, Z::Ride }, { 59, Z::Ride }, { 53, Z::RideBell } };
     }
 
-    // TD-9/11/12 and later: adds cross-stick and the hi-hat edge notes.
-    NoteTable rolandModern()
+    // TD-10: as above, plus note 10 on the crash 2 edge pad.
+    DrumNoteTable rolandTd10()
+    {
+        auto t = rolandClassic();
+        t.push_back ({ 10, Z::Crash2Edge });
+        return t;
+    }
+
+    // TD-9/11/12 and later: adds cross-stick.
+    DrumNoteTable rolandModern()
     {
         auto t = rolandClassic();
         t.push_back ({ 37, Z::CrossStick });
-        t.push_back ({ 22, Z::HiHatClosed });
-        t.push_back ({ 26, Z::HiHatOpen });
         return t;
     }
 
     // Alesis modules follow the Roland layout.
-    NoteTable alesis()   { return rolandModern(); }
+    DrumNoteTable alesis()   { return rolandModern(); }
 
     // Yamaha DTX: toms 48 / 47 / 43 (DTX402 reference), open rim 40, closed rim 37, foot splash 83.
-    NoteTable yamaha()
+    DrumNoteTable yamaha()
     {
         return { { 36, Z::Kick }, { 38, Z::Snare }, { 40, Z::SnareRim }, { 37, Z::CrossStick },
                  { 48, Z::Tom1 }, { 50, Z::Tom1 }, { 47, Z::Tom2 }, { 45, Z::Tom3 }, { 43, Z::Tom3 }, { 41, Z::Tom4 },
-                 { 42, Z::HiHatClosed }, { 46, Z::HiHatOpen }, { 44, Z::HiHatPedal }, { 83, Z::HiHatOpen },
-                 { 49, Z::Crash1 }, { 55, Z::Crash1 }, { 57, Z::Crash2 }, { 52, Z::Crash2 },
+                 { 42, Z::HiHatClosed }, { 46, Z::HiHatOpen }, { 46, Z::HiHatPedal }, { 44, Z::HiHatPedal }, { 83, Z::HiHatOpen },
+                 { 49, Z::Crash1 }, { 55, Z::Crash1 }, { 57, Z::Crash2 }, { 52, Z::Crash2Edge },
                  { 51, Z::Ride }, { 59, Z::Ride }, { 53, Z::RideBell } };
     }
 
     // General MIDI drum map, for modules that default to it (and as a fallback).
-    NoteTable generalMidi()
+    DrumNoteTable generalMidi()
     {
         return { { 35, Z::Kick }, { 36, Z::Kick }, { 38, Z::Snare }, { 40, Z::SnareRim }, { 37, Z::CrossStick },
                  { 50, Z::Tom1 }, { 48, Z::Tom1 }, { 47, Z::Tom2 }, { 45, Z::Tom2 }, { 43, Z::Tom3 }, { 41, Z::Tom4 },
-                 { 42, Z::HiHatClosed }, { 46, Z::HiHatOpen }, { 44, Z::HiHatPedal },
-                 { 49, Z::Crash1 }, { 55, Z::Crash1 }, { 57, Z::Crash2 }, { 52, Z::Crash2 },
-                 { 51, Z::Ride }, { 59, Z::Ride }, { 53, Z::RideBell },
-                 { 39, Z::Aux }, { 54, Z::Aux }, { 56, Z::Aux } };
+                 { 42, Z::HiHatClosed }, { 46, Z::HiHatOpen }, { 46, Z::HiHatPedal }, { 44, Z::HiHatPedal },
+                 { 49, Z::Crash1 }, { 55, Z::Crash1 }, { 57, Z::Crash2 }, { 52, Z::Crash2Edge },
+                 { 51, Z::Ride }, { 59, Z::Ride }, { 53, Z::RideBell } };
     }
 
     std::vector<DrumModule> makeModules()
     {
         std::vector<DrumModule> m;
-        auto add = [&m] (const char* id, const char* brand, const char* name, NoteTable notes)
+        auto add = [&m] (const char* id, const char* brand, const char* name, DrumNoteTable notes)
         {
             m.push_back ({ id, name, brand, std::move (notes) });
         };
@@ -96,7 +104,7 @@ namespace
         add ("roland-td3",   "Roland", "Roland TD-3",  rolandClassic());
         add ("roland-td6",   "Roland", "Roland TD-6",  rolandClassic());
         add ("roland-td8",   "Roland", "Roland TD-8",  rolandClassic());
-        add ("roland-td10",  "Roland", "Roland TD-10", rolandClassic());
+        add ("roland-td10",  "Roland", "Roland TD-10", rolandTd10());
         add ("roland-td1",   "Roland", "Roland TD-1",  rolandModern());
         add ("roland-td02",  "Roland", "Roland TD-02", rolandModern());
         add ("roland-td07",  "Roland", "Roland TD-07", rolandModern());
@@ -130,6 +138,13 @@ namespace
         add ("gm",             "Other",  "General MIDI drum map (EFNOTE, Simmons, ATV, Millenium, ...)", generalMidi());
         return m;
     }
+
+    bool validZone (int zone) { return zone >= 0 && zone < (int) DrumZone::NumZones; }
+
+    juce::File customMapFile (const juce::String& name)
+    {
+        return UserFiles::drumMapsDirectory().getChildFile (UserFiles::safeFileName (name) + CustomDrumMaps::kExtension);
+    }
 }
 
 const std::vector<DrumModule>& drumModules()
@@ -146,6 +161,155 @@ const DrumModule* findDrumModule (const juce::String& id)
         if (m.id == id)
             return &m;
     return nullptr;
+}
+
+//==============================================================================
+std::vector<DrumModule> CustomDrumMaps::list()
+{
+    std::vector<DrumModule> result;
+    auto dir = UserFiles::drumMapsDirectory();
+    if (! dir.isDirectory())
+        return result;
+
+    for (const auto& e : juce::RangedDirectoryIterator (dir, false, juce::String ("*") + kExtension, juce::File::findFiles))
+    {
+        auto xml = juce::parseXML (e.getFile());
+        if (xml == nullptr || ! xml->hasTagName ("KaiaDrumMap"))
+            continue;
+        DrumModule m;
+        m.name = xml->getStringAttribute ("name", e.getFile().getFileNameWithoutExtension()).trim();
+        m.id = kIdPrefix + m.name;
+        m.brand = "Custom";
+        m.notes = TriggerMap::notesFromString (xml->getStringAttribute ("notes"));
+        if (m.name.isNotEmpty())
+            result.push_back (std::move (m));
+    }
+    std::sort (result.begin(), result.end(), [] (const DrumModule& a, const DrumModule& b) { return a.name.compareNatural (b.name) < 0; });
+    return result;
+}
+
+bool CustomDrumMaps::load (const juce::String& name, DrumNoteTable& notes)
+{
+    for (auto& m : list())
+        if (m.name == name)
+        {
+            notes = m.notes;
+            return true;
+        }
+    return false;
+}
+
+bool CustomDrumMaps::save (const juce::String& name, const DrumNoteTable& notes, juce::String& error)
+{
+    auto trimmed = name.trim();
+    if (trimmed.isEmpty())
+    {
+        error = "The drum map needs a name.";
+        return false;
+    }
+    auto file = customMapFile (trimmed);
+    if (! file.getParentDirectory().createDirectory())
+    {
+        error = "Can't create " + file.getParentDirectory().getFullPathName();
+        return false;
+    }
+    juce::XmlElement xml ("KaiaDrumMap");
+    xml.setAttribute ("version", 1);
+    xml.setAttribute ("name", trimmed);
+    xml.setAttribute ("notes", TriggerMap::notesToString (notes));
+    if (! xml.writeTo (file))
+    {
+        error = "Can't write " + file.getFullPathName();
+        return false;
+    }
+    return true;
+}
+
+bool CustomDrumMaps::remove (const juce::String& name)
+{
+    auto file = customMapFile (name.trim());
+    return file.isAChildOf (UserFiles::drumMapsDirectory()) && file.existsAsFile() && file.deleteFile();
+}
+
+//==============================================================================
+bool TriggerMap::isEdited() const
+{
+    auto* m = findDrumModule (moduleId);
+    return m != nullptr && m->notes != notes;
+}
+
+juce::String TriggerMap::moduleName() const
+{
+    if (isCustom())
+        return moduleId.fromFirstOccurrenceOf (CustomDrumMaps::kIdPrefix, false, false);
+    if (auto* m = findDrumModule (moduleId))
+        return m->name;
+    return {};
+}
+
+bool TriggerMap::selectModule (const juce::String& id)
+{
+    if (id.isEmpty())
+    {
+        moduleId = {};
+        notes.clear();
+        return true;
+    }
+    if (auto* m = findDrumModule (id))
+    {
+        moduleId = id;
+        notes = m->notes;
+        return true;
+    }
+    if (id.startsWith (CustomDrumMaps::kIdPrefix))
+    {
+        DrumNoteTable table;
+        if (CustomDrumMaps::load (id.fromFirstOccurrenceOf (CustomDrumMaps::kIdPrefix, false, false), table))
+        {
+            moduleId = id;
+            notes = std::move (table);
+            return true;
+        }
+    }
+    return false;
+}
+
+void TriggerMap::resetToFactory()
+{
+    if (auto* m = findDrumModule (moduleId))
+        notes = m->notes;
+}
+
+std::vector<int> TriggerMap::notesForZone (int zone) const
+{
+    std::vector<int> result;
+    for (auto& [note, z] : notes)
+        if ((int) z == zone && std::find (result.begin(), result.end(), note) == result.end())
+            result.push_back (note);
+    return result;
+}
+
+void TriggerMap::setZoneNotes (int zone, const std::vector<int>& newNotes)
+{
+    if (! validZone (zone))
+        return;
+    notes.erase (std::remove_if (notes.begin(), notes.end(), [zone] (auto& e) { return (int) e.second == zone; }), notes.end());
+    for (auto n : newNotes)
+        if (n >= 0 && n < 128 && std::find (notes.begin(), notes.end(), std::make_pair (n, (DrumZone) zone)) == notes.end())
+            notes.push_back ({ n, (DrumZone) zone });
+}
+
+void TriggerMap::moveNoteToZone (int note, int zone)
+{
+    if (! validZone (zone) || note < 0 || note > 127)
+        return;
+    notes.erase (std::remove_if (notes.begin(), notes.end(), [note] (auto& e) { return e.first == note; }), notes.end());
+    notes.push_back ({ note, (DrumZone) zone });
+}
+
+void TriggerMap::removeNote (int note, int zone)
+{
+    notes.erase (std::remove (notes.begin(), notes.end(), std::make_pair (note, (DrumZone) zone)), notes.end());
 }
 
 //==============================================================================
@@ -169,7 +333,7 @@ std::array<std::vector<int>, 128> TriggerMap::resolve (const Kit& kit) const
         return result;
     }
 
-    auto* mod = module();
+    auto mod = usesModule();
     for (int n = 0; n < 128; ++n)
     {
         auto& out = result[(size_t) n];
@@ -181,9 +345,9 @@ std::array<std::vector<int>, 128> TriggerMap::resolve (const Kit& kit) const
             continue;
         }
 
-        if (mod != nullptr)
+        if (mod)
         {
-            for (auto& [note, zone] : mod->notes)
+            for (auto& [note, zone] : notes)
                 if (note == n)
                 {
                     auto pad = drumZonePad (zone);
@@ -243,10 +407,55 @@ void TriggerMap::learnedFromString (const juce::String& s)
     }
 }
 
+juce::String TriggerMap::notesToString (const DrumNoteTable& table)
+{
+    juce::StringArray parts;
+    for (auto& [note, zone] : table)
+        parts.add (juce::String (note) + ":" + juce::String ((int) zone));
+    return parts.joinIntoString (",");
+}
+
+DrumNoteTable TriggerMap::notesFromString (const juce::String& s)
+{
+    DrumNoteTable table;
+    for (auto& part : juce::StringArray::fromTokens (s, ",", {}))
+    {
+        if (! part.containsChar (':'))
+            continue;
+        auto note = part.upToFirstOccurrenceOf (":", false, false).trim().getIntValue();
+        auto zone = part.fromFirstOccurrenceOf (":", false, false).trim().getIntValue();
+        auto entry = std::make_pair (note, (DrumZone) zone);
+        if (note >= 0 && note < 128 && validZone (zone) && std::find (table.begin(), table.end(), entry) == table.end())
+            table.push_back (entry);
+    }
+    return table;
+}
+
+void TriggerMap::restore (const juce::String& id, const juce::String& noteTable)
+{
+    moduleId = {};
+    notes.clear();
+    if (id.isEmpty())
+        return;
+
+    // A stored table wins (edited or custom maps, and projects from another computer); otherwise
+    // the module's current factory notes or the saved custom map.
+    auto table = notesFromString (noteTable);
+    if (! table.empty() && (findDrumModule (id) != nullptr || id.startsWith (CustomDrumMaps::kIdPrefix)))
+    {
+        moduleId = id;
+        notes = std::move (table);
+        return;
+    }
+    selectModule (id);
+}
+
 std::unique_ptr<juce::XmlElement> TriggerMap::toXml() const
 {
     auto xml = std::make_unique<juce::XmlElement> ("TriggerMap");
     xml->setAttribute ("module", moduleId);
+    if (usesModule())
+        xml->setAttribute ("notes", notesToString (notes));
     xml->setAttribute ("hiHatChoke", hiHatChoke ? 1 : 0);
     xml->setAttribute ("learned", learnedToString());
     return xml;
@@ -255,9 +464,7 @@ std::unique_ptr<juce::XmlElement> TriggerMap::toXml() const
 TriggerMap TriggerMap::fromXml (const juce::XmlElement& xml)
 {
     TriggerMap m;
-    m.moduleId = xml.getStringAttribute ("module");
-    if (findDrumModule (m.moduleId) == nullptr)
-        m.moduleId = {};
+    m.restore (xml.getStringAttribute ("module"), xml.getStringAttribute ("notes"));
     m.hiHatChoke = xml.getIntAttribute ("hiHatChoke", 1) != 0;
     m.learnedFromString (xml.getStringAttribute ("learned"));
     return m;

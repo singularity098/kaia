@@ -56,6 +56,30 @@ int main (int argc, char** argv)
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     editor->setSize (1120, 720);
     editor->setVisible (true);
+    pump (300);
+
+    // KAIA_SNAPSHOT_PAD_THEMES=1: one shot of the pads per colour theme (before any pad lights up)
+    if (juce::SystemStats::getEnvironmentVariable ("KAIA_SNAPSHOT_PAD_THEMES", {}).isNotEmpty())
+    {
+        juce::Component* grid = nullptr;
+        for (auto* c : editor->getChildren())
+            if (dynamic_cast<PadGrid*> (c) != nullptr)
+                grid = c;
+        auto saved = Colours::padTheme;
+        for (int i = 0; grid != nullptr && i < (int) padThemes().size(); ++i)
+        {
+            Colours::padTheme = i;
+            editor->repaint();
+            pump (120);
+            auto img = editor->createComponentSnapshot (grid->getBounds(), true, 1.0f);
+            auto f = outDir.getChildFile ("padtheme-" + juce::String (i).paddedLeft ('0', 2) + "-" + padThemes()[(size_t) i].name + ".png");
+            f.deleteFile();
+            juce::FileOutputStream out (f);
+            juce::PNGImageFormat().writeImageToStream (img, out);
+        }
+        Colours::padTheme = saved;
+        editor->repaint();
+    }
 
     // Play a few pads in the background so some of them light up
     std::atomic<bool> running { true };
@@ -81,6 +105,7 @@ int main (int argc, char** argv)
 
     pump (900);
     save (*editor, outDir.getChildFile ("editor.png"));
+
 
     auto click = [&editor] (const juce::String& text)
     {

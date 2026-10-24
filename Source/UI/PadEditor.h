@@ -49,6 +49,19 @@ private:
     juce::String name;
 };
 
+// Plays the selected pad while held (a big, touch-friendly target under the waveform).
+class PlayButton : public juce::Button
+{
+public:
+    PlayButton() : juce::Button ("Play") {}
+    std::function<void()> onPress, onRelease;
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+    void buttonStateChanged() override;
+
+private:
+    bool wasDown = false;
+};
+
 class PadEditor : public juce::Component
 {
 public:
@@ -85,6 +98,8 @@ private:
 
     juce::OwnedArray<LayerRow> layerRows;
     juce::TextButton addLayerButton { "+ Add layer..." }, clearButton { "Clear pad" };
+    PlayButton playButton;
+    int playingNote = -1;
     WaveformView waveform;
 
     int selectedLayer = 0;

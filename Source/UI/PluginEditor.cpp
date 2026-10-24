@@ -50,6 +50,15 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     for (auto* l : { &kitLabel, &formatLabel, &statusLabel, &voicesLabel })
         addAndMakeVisible (l);
 
+    coverButton.setTooltip ("Show the programs of this expansion");
+    coverButton.onClick = [this] { togglePanel (Panel::Programs); };
+    addChildComponent (coverButton);
+
+    githubLink.setFont (uiFont (12.0f), false, juce::Justification::centredRight);
+    githubLink.setColour (juce::HyperlinkButton::textColourId, Colours::textDim);
+    githubLink.setTooltip ("Kaia on GitHub: github.com/singularity098/kaia");
+    addAndMakeVisible (githubLink);
+
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     masterSlider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
@@ -87,6 +96,7 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     settingsPanel.onClose = [this] { showPanel (Panel::PadEditor); };
     settingsPanel.onChooseLibraryFolder = [this] { chooseLibraryFolder(); };
     settingsPanel.onAccentChanged = [this] { accentChanged(); };
+    settingsPanel.onPadThemeChanged = [this] { padThemeChanged(); };
     addChildComponent (settingsPanel);
     settings().addChangeListener (this);
 
@@ -118,6 +128,8 @@ void KaiaEditor::changeListenerCallback (juce::ChangeBroadcaster* source)
     {
         if (savedAccentColour() != Colours::accent)
             accentChanged();
+        if (savedPadTheme() != Colours::padTheme)
+            padThemeChanged();
         return;
     }
     refreshAll();
@@ -131,8 +143,32 @@ void KaiaEditor::accentChanged()
     refreshAll();
 }
 
+void KaiaEditor::padThemeChanged()
+{
+    Colours::padTheme = savedPadTheme();
+    padGrid.refresh();
+    settingsPanel.refresh();
+}
+
+void KaiaEditor::updateCover()
+{
+    // Decoding the artwork only when the pack changes
+    auto& info = processor.getPackInfo();
+    auto key = processor.getPackFile().getFullPathName() + ":" + juce::String ((juce::int64) info.image.getSize());
+    if (key == shownCoverKey)
+        return;
+    shownCoverKey = key;
+
+    auto image = info.image.isEmpty() ? juce::Image()
+                                      : juce::ImageFileFormat::loadFrom (info.image.getData(), info.image.getSize());
+    if (image.isValid())
+        coverButton.setImages (false, true, true, image, 1.0f, {}, image, 0.85f, {}, image, 0.7f, {});
+    coverButton.setVisible (image.isValid());
+}
+
 void KaiaEditor::refreshAll()
 {
+    updateCover();
     auto& kit = processor.getKit();
     kitLabel.setText (kit.name.isNotEmpty() ? kit.name : "Untitled", juce::dontSendNotification);
 
@@ -162,8 +198,23 @@ void KaiaEditor::refreshAll()
 
 void KaiaEditor::timerCallback()
 {
-    auto voices = processor.getEngine().getActiveVoiceCount();
+    auto& engine = processor.getEngine();
+    auto voices = engine.getActiveVoiceCount();
     voicesLabel.setText (juce::String (voices) + (voices == 1 ? " voice" : " voices"), juce::dontSendNotification);
+
+    // Incoming MIDI notes: the header shows the last one and flashes on every hit
+    auto lastNote = engine.getLastInputNote();
+    if (lastNote != shownInputNote)
+    {
+        shownInputNote = lastNote;
+        midiFlash = 1.0f;
+        repaint (midiArea);
+    }
+    else if (midiFlash > 0.0f)
+    {
+        midiFlash = midiFlash < 0.05f ? 0.0f : midiFlash * 0.7f;
+        repaint (midiArea);
+    }
 
     auto loading = processor.isLoading();
     auto progress = loading ? processor.getLoadProgress() : 0.0f;
@@ -213,6 +264,41 @@ void KaiaEditor::paint (juce::Graphics& g)
         g.fillRoundedRectangle (r.withWidth (juce::jmax (6.0f, r.getWidth() * shownProgress)), 3.0f);
     }
 
+    // Last MIDI note received
+    {
+        auto r = midiArea.toFloat();
+        g.setColour (Colours::panelRaised.interpolatedWith (Colours::accent, 0.45f * midiFlash));
+        g.fillRoundedRectangle (r, 5.0f);
+        g.setColour (midiFlash > 0.0f ? Colours::accent : Colours::outline);
+        g.drawRoundedRectangle (r.reduced (0.5f), 5.0f, 1.0f);
+
+        auto inner = midiArea.reduced (8, 4);
+        if (inner.getWidth() > 96)
+        {
+            auto label = inner.removeFromLeft (30);
+            g.setColour (Colours::textDim);
+            g.setFont (uiFont (10.0f, true));
+            g.drawText ("MIDI", label.removeFromTop (label.getHeight() / 2), juce::Justification::bottomLeft);
+            g.drawText ("NOTE", label, juce::Justification::topLeft);
+        }
+
+        bool any = shownInputNote != 0;
+        auto note = (int) (shownInputNote & 0x7f);
+        auto numberArea = inner.removeFromLeft (38);
+        g.setColour (any ? Colours::text : Colours::textDim);
+        g.setFont (uiFont (22.0f, true));
+        g.drawText (any ? juce::String (note) : juce::String ("--"), numberArea, juce::Justification::centred);
+
+        g.setFont (uiFont (11.0f));
+        g.setColour (Colours::textDim);
+        if (any)
+        {
+            g.drawText (juce::MidiMessage::getMidiNoteName (note, true, true, 3), inner.removeFromTop (inner.getHeight() / 2),
+                        juce::Justification::bottomRight);
+            g.drawText ("vel " + juce::String (processor.getEngine().getLastInputVelocity()), inner, juce::Justification::topRight);
+        }
+    }
+
     g.setColour (Colours::textDim);
     g.setFont (uiFont (11.0f));
     g.drawText ("MASTER", masterSlider.getBounds().translated (0, 0).withY (headerArea.getBottom() - 14).withHeight (12),
@@ -222,29 +308,42 @@ void KaiaEditor::paint (juce::Graphics& g)
 void KaiaEditor::resized()
 {
     auto r = getLocalBounds();
-    headerArea = r.removeFromTop (58);
+    headerArea = r.removeFromTop (64);
     footerArea = r.removeFromBottom (32);
 
     auto h = headerArea.reduced (12, 10);
     h.removeFromLeft (130);
-    openButton.setBounds (h.removeFromLeft (76));
+    auto nav = [&h] (juce::Component& c, int w) { c.setBounds (h.removeFromLeft (w).withSizeKeepingCentre (w, 38)); };
+    nav (openButton, 76);
     h.removeFromLeft (6);
-    browseButton.setBounds (h.removeFromLeft (92));
+    nav (browseButton, 92);
     h.removeFromLeft (6);
-    libraryButton.setBounds (h.removeFromLeft (80));
+    nav (libraryButton, 80);
     h.removeFromLeft (6);
-    prevButton.setBounds (h.removeFromLeft (34));
+    nav (prevButton, 34);
     h.removeFromLeft (4);
-    nextButton.setBounds (h.removeFromLeft (34));
+    nav (nextButton, 34);
     h.removeFromLeft (14);
 
-    auto right = h.removeFromRight (190);
-    masterSlider.setBounds (right.removeFromRight (52).withTrimmedBottom (10).expanded (0, 6));
-    right.removeFromRight (8);
-    panicButton.setBounds (right.removeFromRight (58).reduced (0, 4));
-    right.removeFromRight (6);
-    voicesLabel.setBounds (right);
+    auto narrow = h.getWidth() < 520;     // near the minimum editor width
+    githubLink.setBounds (h.removeFromRight (48).withTrimmedBottom (h.getHeight() / 2));
+    h.removeFromRight (8);
+    masterSlider.setBounds (h.removeFromRight (52).withTrimmedBottom (10).expanded (0, 6));
+    h.removeFromRight (8);
+    panicButton.setBounds (h.removeFromRight (58).reduced (0, 4));
+    h.removeFromRight (10);
+    midiArea = h.removeFromRight (narrow ? 104 : 124).reduced (0, 1);
+    h.removeFromRight (12);
 
+    if (coverButton.isVisible() && h.getWidth() >= 220)
+    {
+        coverButton.setBounds (h.removeFromLeft (h.getHeight() + 6).expanded (0, 4).withTrimmedRight (6));
+        h.removeFromLeft (8);
+    }
+    else
+    {
+        coverButton.setBounds ({});
+    }
     kitLabel.setBounds (h.removeFromTop (22));
     formatLabel.setBounds (h);
 
@@ -259,6 +358,8 @@ void KaiaEditor::resized()
         f.removeFromRight (6);
     }
     progressArea = f.removeFromRight (120).reduced (0, 7);
+    f.removeFromRight (10);
+    voicesLabel.setBounds (f.removeFromRight (70));
     f.removeFromRight (10);
     statusLabel.setBounds (f);
 

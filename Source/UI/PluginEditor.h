@@ -57,6 +57,9 @@ private:
     juce::TextButton panicButton { "Stop" }, relinkButton { "Relink..." }, routingButton { "Outputs" };
     juce::TextButton libraryButton { "Library" }, settingsButton { "Settings" };
     juce::Label kitLabel, formatLabel, statusLabel, voicesLabel;
+    juce::ImageButton coverButton;                 // the open expansion's artwork
+    juce::String shownCoverKey;
+    juce::HyperlinkButton githubLink { "GitHub", juce::URL ("https://github.com/singularity098/kaia") };
     juce::Slider masterSlider;
     juce::AudioProcessorValueTreeState::SliderAttachment masterAttachment;
 
@@ -74,7 +77,12 @@ private:
     std::unique_ptr<Pad> clipboard;
     juce::ComponentBoundsConstrainer constrainer;
 
-    juce::Rectangle<int> headerArea, footerArea, progressArea;
+    void updateCover();
+    void padThemeChanged();
+
+    juce::Rectangle<int> headerArea, footerArea, progressArea, midiArea;
+    juce::uint32 shownInputNote = 0;     // last MIDI note-on shown in the header
+    float midiFlash = 0.0f;
     float shownProgress = 0.0f;
     bool wasLoading = false;
 

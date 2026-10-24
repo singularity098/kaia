@@ -402,6 +402,25 @@ PadEditor::PadEditor (KaiaProcessor& p)
     addChildComponent (hintLabel);
 
     addAndMakeVisible (waveform);
+
+    playButton.setTooltip ("Play the pad");
+    playButton.onPress = [this]
+    {
+        auto& kit = processor.getKit();
+        if (processor.selectedPad < 0 || processor.selectedPad >= (int) kit.pads.size())
+            return;
+        auto& pad = kit.pads[(size_t) processor.selectedPad];
+        playingNote = pad.isKeygroup() ? juce::jlimit (pad.noteLow, pad.noteHigh, 60) : pad.note;
+        if (playingNote >= 0)
+            processor.getEngine().auditionNoteOn (playingNote, 110);
+    };
+    playButton.onRelease = [this]
+    {
+        if (playingNote >= 0)
+            processor.getEngine().auditionNoteOff (playingNote);
+        playingNote = -1;
+    };
+    addAndMakeVisible (playButton);
     refresh();
 }
 
@@ -511,6 +530,7 @@ void PadEditor::refresh()
     hintLabel.setVisible (numLayers == 0);
     addLayerButton.setEnabled (valid && numLayers < kMaxLayers);
     clearButton.setEnabled (valid && numLayers > 0);
+    playButton.setEnabled (valid && numLayers > 0);
 
     for (auto* c : getChildren())
         if (c != &hintLabel && c != &addLayerButton && c != &padLabel && c != &noteBox && c != &waveform)
@@ -570,6 +590,7 @@ void PadEditor::resized()
     clearButton.setBounds (buttons.removeFromRight (90));
     buttons.removeFromRight (6);
     addLayerButton.setBounds (buttons.removeFromRight (130));
+    playButton.setBounds (buttons.removeFromLeft (96));
     r.removeFromBottom (6);
 
     // Layer rows from the top, the waveform takes what's left (at least 70 px)
@@ -582,6 +603,42 @@ void PadEditor::resized()
         layerRows[i]->setBounds (rowsArea.removeFromTop (24));
     r.removeFromTop (6);
     waveform.setBounds (r);
+}
+
+//==============================================================================
+void PlayButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    auto r = getLocalBounds().toFloat().reduced (0.5f);
+    auto on = isEnabled();
+    g.setColour (down ? Colours::accent : highlighted ? Colours::panelRaised.brighter (0.15f) : Colours::panelRaised);
+    g.fillRoundedRectangle (r, 4.0f);
+    g.setColour (down ? Colours::accent : Colours::outline);
+    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+
+    auto content = getLocalBounds().reduced (12, 0);
+    auto icon = content.removeFromLeft (14).toFloat().withSizeKeepingCentre (11.0f, 12.0f);
+    juce::Path triangle;
+    triangle.addTriangle (icon.getTopLeft(), icon.getBottomLeft(), { icon.getRight(), icon.getCentreY() });
+    auto ink = down ? juce::Colours::black : on ? Colours::accent : Colours::textDim;
+    g.setColour (ink);
+    g.fillPath (triangle);
+
+    content.removeFromLeft (8);
+    g.setColour (down ? juce::Colours::black : on ? Colours::text : Colours::textDim);
+    g.setFont (uiFont (13.0f, true));
+    g.drawText ("Play", content, juce::Justification::centredLeft);
+}
+
+void PlayButton::buttonStateChanged()
+{
+    auto down = isDown();
+    if (down == wasDown)
+        return;
+    wasDown = down;
+    if (down && onPress)
+        onPress();
+    else if (! down && onRelease)
+        onRelease();
 }
 
 void PadEditor::paint (juce::Graphics& g)

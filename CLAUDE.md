@@ -29,9 +29,10 @@ Source/
   Model/Kit.h/.cpp          Kit / Pad / Layer data model, XML (de)serialisation for plugin state,
                             MPC default pad->note map, MPC fader-law helpers
   Model/TriggerMap          e-drum modules (note -> DrumZone tables), fixed zone->pad layout,
-                            learned notes; resolve() = which pads each MIDI note plays
+                            editable note table + custom maps (drum-maps/*.kaiamap), learned notes;
+                            resolve() = which pads each MIDI note plays
   Model/UserFiles           config folder (XDG on Linux, KAIA_CONFIG_DIR override, legacy
-                            ~/Kaia migration), SharedSettings (PropertiesFile), Presets
+                            ~/Kaia migration), SharedSettings (PropertiesFile), Presets, drum-maps/
   Formats/
     ZipReader               own zip reader: stored + deflate, Zip64, detects encryption (never decrypts)
     SampleSource            audio decoding (JUCE formats + .SND), SampleIndex (find samples by name),
@@ -49,14 +50,17 @@ Source/
     SamplerEngine           voices, MIDI, layer selection, chokes, envelopes, SVF filter, multi-out
     SincTable               polyphase windowed-sinc tables (24 taps, 256 phases, 8 anti-alias bands)
   PluginProcessor           buses (Main + Aux 1-16), loader thread, state save/restore, edit API
-  UI/                       LookAndFeel (near-black theme, user accent colour), PadGrid (MPC layout,
-                            pad 1 bottom-left, library drop target), PadEditor, ProgramBrowser,
-                            LibraryBrowser (TreeView, audition, drag to pads), SettingsPanel, PluginEditor
+  UI/                       LookAndFeel (near-black theme, user accent colour, pad colour themes),
+                            PadGrid (MPC layout, pad 1 bottom-left, library drop target), PadEditor,
+                            ProgramBrowser, LibraryBrowser (TreeView, audition, drag to pads, own
+                            smooth wheel scrolling), SettingsPanel (drum map editor), PluginEditor
+                            (header: pack artwork, last MIDI note, GitHub link)
 Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
   UiSnapshot.cpp            KaiaUiSnapshot: renders the real editor to PNG (docs/editor.png; also
-                            library.png/settings.png when given a library folder)
+                            library.png/settings.png when given a library folder;
+                            KAIA_SNAPSHOT_PAD_THEMES=1 adds one shot of the pads per colour theme)
 tools/
   make_demo_pack.py         generates "Kaia Demo Kit.xpn" (synthesized drums, safe to redistribute)
   sandbox-sysroot.sh        header-only sysroot for build machines without the distro -dev packages
@@ -91,8 +95,14 @@ braces on their own line).
 * Library previews: a `PreviewSound` (pad + its samples, decoded on `previewPool`) becomes part of
   the next runtime snapshot (`KitRuntime::preview`, `previewId`); `engine.startPreview(id)` waits
   until that snapshot is active. Every `rebuildRuntime()` passes the current preview along.
-* MIDI Learn: the engine publishes the last note-on as `(sequence << 8) | note` in an atomic; the
-  processor's timer polls it while a pad is learning.
+* MIDI Learn: the engine publishes the last note-on as `(sequence << 8) | note` in an atomic (and
+  its velocity in another); the processor's timer polls it while a pad is learning, the editor's
+  header and the settings map editor poll it for display and "Learn".
+* Pads started by the same note event never choke each other (`eventFirstSerial`): a note may play
+  several pads (open hi-hat = A08 + A04). Simult targets carry the original input note, so the
+  same note-off releases them.
+* Sample loops are only honoured when the shared setting `playLoops` is on (off by default);
+  `buildRuntime (..., playLoops)` drops them otherwise.
 * `KaiaTests` overrides global `operator new` and fails if `process()` allocates — keep it passing.
 * `getStateInformation` may be called off the message thread: it then uses `cachedKitXml`
   (refreshed by the timer when `stateDirty`). `setStateInformation` loads samples synchronously
@@ -129,20 +139,26 @@ PGM:
   MPC3000 has a 38-byte header, 44.1 kHz.
 
 E-drum modules (`TriggerMap.cpp`): zone layout A01 kick, A02 snare, A03 HH closed, A04 HH pedal,
-A05 snare rim, A06 cross-stick, A07 aux, A08 HH open, A09-A12 toms 1-4, A13/A14 crash 1/2, A15
-ride, A16 ride bell; rims/edges play the head/bow pad. Note tables are factory defaults: Roland
-classic (TD-3..TD-10) 36/38/40, toms 48/50 45/47 43/58 41/39, HH 42/46/44, crashes 49/55 57/52,
-ride 51/59/53; modern Roland and Alesis add 37 cross-stick, 22/26 HH edges; Yamaha DTX toms
-48/47/43 (DTX402 reference), 37 closed rim, 83 foot splash; GM for the rest. Partly checked against the
-published TD-17/TD-27 and DTX402 maps (kick, snare, rim, toms, hi-hats, ride bell); the TD-10 and
-the rest are unverified. With a module, unlisted
+A05 snare rim, A06 cross-stick, A07 crash 1, A08 HH open, A09 tom 4 (floor) .. A12 tom 1 (high), A13
+ride, A14 ride bell, A15 crash 2 edge, A16 crash 2; tom rims and the ride edge play the head/bow pad.
+The open hi-hat notes also play A04 (owner's request: both pads at once). This layout and the
+TD-10 notes come from the owner's own TD-10: toms reversed (low tom on A09), 22/26 hi-hat edges, 51
+-> A13, 53 -> A14, 57 -> A16, 52 -> A15, 55 -> A07, 10 -> A15 (TD-10 only); 49 was put with 55 on A07
+and 59 with 51 on A13 by inference. Note tables are factory defaults: Roland classic (TD-3..TD-10)
+36/38/40, toms 48/50 45/47 43/58 41/39, HH 42+22 / 46+26 / 44, crash 1 49/55, crash 2 57 + edge 52,
+ride 51/59, bell 53; modern Roland and Alesis add 37 cross-stick; Yamaha DTX toms 48/47/43 (DTX402
+reference), 37 closed rim, 83 foot splash; GM for the rest. Partly checked against the published
+TD-17/TD-27 and DTX402 maps; the rest is unverified. The active map is a note table in
+`TriggerMap::notes` (editable in Settings, saveable as `custom:<name>`); settings store it only when
+it differs from the factory table (`drumNotes`), so built-in modules pick up improved defaults,
+while projects always store it. With a module, unlisted
 notes are ignored and HH pads share mute group 33 (`kHiHatChokeGroup`) unless the kit groups them.
 Keygroup programs ignore the map. The map is global (settings) and also saved per project
 (`<TriggerMap>` in `KaiaState`); projects without one keep the instance's default.
 
 Engine behaviour worth knowing: velocity -> level is linear amplitude scaled by `velToLevel`;
 pan is a balance law (centre = unity); chokes fade in 5 ms, mono retrigger 3 ms; loops only apply
-in note-on mode; program individual-output routing is ignored (all pads start on Main).
+in note-on mode and only with the `playLoops` setting on; program individual-output routing is ignored (all pads start on Main).
 
 Encrypted (copy-protected) expansions are detected and reported. Do not add decryption.
 
@@ -224,5 +240,9 @@ Product "Kaia", manufacturer code `Kaia`, plugin code `Kai1`, VST3/AU bundle id
 * Not implemented: MPC insert effects, LFOs, pitch/filter envelopes, Q-links, warp,
   MPC2000XL decay-switch, per-program output routing, MIDI channel filter.
 * Windows/macOS builds are produced by CI but haven't been tried in a host.
-* Drum-module maps haven't been tried with real hardware yet (TD-10 included).
+* Drum-module maps: only the TD-10 has been tried with real hardware (by the owner).
 * Library: one root folder; program pads are parsed on the message thread when expanded.
+* Touch: Linux delivers touch as mouse events, so lists use `ScrollOnDragMode::all`; the library
+  only starts a drag-and-drop when the drag starts sideways (`Item::dragIsVertical`) and plays
+  auditions on mouse-up. The library hides the TreeView's scroll bars so wheel events reach
+  `LibraryBrowser::mouseWheelMove` (animated), with its own ScrollBar.
