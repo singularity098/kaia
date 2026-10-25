@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LookAndFeel.h"
+#include "KineticScroller.h"
 #include "../PluginProcessor.h"
 
 namespace kaia
@@ -8,11 +9,10 @@ namespace kaia
 
 // Browses the library folder: presets, expansions and folders, their programs (and the pads of
 // each program) and their samples. Click to open, audition or load, double-click to use, drag
-// onto a pad.
-// Nothing here writes to the library.
+// onto a pad. The tile view shows the packs as cover art (2-4 columns); a tap loads the pack,
+// which is then open in the list. Nothing here writes to the library.
 class LibraryBrowser : public juce::Component,
                        private juce::ChangeListener,
-                       private juce::ScrollBar::Listener,
                        private juce::Timer
 {
 public:
@@ -30,8 +30,6 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void visibilityChanged() override;
-    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
@@ -44,14 +42,16 @@ private:
     class PadItem;
     class SampleItem;
     class PresetItem;
+    class TileView;
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
-    void scrollBarMoved (juce::ScrollBar*, double newRangeStart) override;
     void timerCallback() override;
-    void animateScroll();
-    void syncScrollBar();
     void rebuildTree();
     void updateHint();
+    void setTileMode (bool tiles, bool save);
+    void setTileColumns (int columns, bool save);
+    void pickPack (int packIndex);         // a tap on a tile
+    void revealPack (const juce::File& pack);
     std::shared_ptr<const Kit> programKit (const ProgramLocation& location);   // parsed lazily, cached
     juce::String targetPadName() const;
 
@@ -63,14 +63,18 @@ private:
     juce::TreeView tree;
     std::unique_ptr<RootItem> root;
     juce::TextButton closeButton { "Done" }, rescanButton { "Rescan" }, folderButton { "Folder..." };
+    juce::TextButton tilesButton { "Tiles" };
+    juce::OwnedArray<juce::TextButton> columnButtons;     // 2, 3, 4 columns
     juce::ToggleButton autoPreview { "Click to hear" };
     juce::Label hint;
 
     juce::ScrollBar scrollBar { true };
-    juce::TimedCallback scrollAnimator { [this] { animateScroll(); } };
-    double scrollTarget = 0.0, scrollPosition = 0.0;
-    bool scrollAnimating = false;
-    juce::Time lastWheelTime;
+    std::unique_ptr<KineticScroller> scroller;
+    std::unique_ptr<TileView> tiles;
+    bool tileMode = false;
+    int tileColumns = 3;
+    juce::File packToReveal;               // picked in the tile view: open it in the list
+    juce::File shownPackFile;
     juce::String pendingClick;             // item clicked, acted on when the click is released
     int hintPad = -1;                      // pad named in the hint
     std::set<juce::String> closedHeadings; // headings the user closed (kept across rebuilds)

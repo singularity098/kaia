@@ -75,6 +75,7 @@ set(KAIA_PLUGIN_SOURCES
     Source/UI/PadGrid.cpp
     Source/UI/PadEditor.cpp
     Source/UI/ProgramBrowser.cpp
+    Source/UI/KineticScroller.cpp
     Source/UI/LibraryBrowser.cpp
     Source/UI/SettingsPanel.cpp
     Source/UI/PluginEditor.cpp)

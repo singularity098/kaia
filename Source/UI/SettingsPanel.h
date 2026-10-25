@@ -63,6 +63,8 @@ private:
 
     juce::Label libraryPath;
     juce::TextButton chooseLibraryButton { "Choose folder..." }, rescanButton { "Rescan" };
+    juce::Label flingLabel;
+    juce::Slider flingSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     std::unique_ptr<Swatches> swatches;
     std::unique_ptr<PadThemePicker> padThemePicker;
     juce::Label configPath;

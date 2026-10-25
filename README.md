@@ -98,6 +98,8 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   (hold Shift while dropping a sample to add it as a layer). This is how you mix and match
   sounds from different expansions. The search box searches programs and samples of the whole
   library. The scan is cached in the config folder, so it's instant next time.
+  **Tiles** switches to a cover-art view of your packs (2, 3 or 4 columns; the search box filters
+  packs by name). Tap a pack to load it; switch back with **List** and that pack is open there.
 * **Presets**: *Open → Save preset…* stores the current kit (all pads, layers and settings) in
   Kaia's config folder. Presets appear under *Open → Presets* and at the top of the Library.
   A preset refers to the samples where they are in your library; Kaia never copies, moves or
@@ -116,9 +118,10 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   (22 closed, 26 open) play the closed/open hi-hat pads, and the open hi-hat notes (46, 26) play
   both A08 and A04, so an open hi-hat can be layered from two pads. Closed and pedal hi-hat cut
   off the open hi-hat (switchable); pads hit by the same note never cut each other. Notes the
-  module doesn't send are ignored. Roland TD-10 example: 36 kick, 38 snare, 40 rim, toms 41/39 →
-  A09 up to 48/50 → A12, 42/22 closed hi-hat, 46/26 open hi-hat, 44 pedal, 49/55 crash 1 (A07),
-  51/59 ride (A13), 53 bell (A14), 52 and 10 → A15, 57 → A16.
+  module doesn't send are ignored. Roland TD-10: 36 kick, 38 snare, 40 rim, toms 41/39 →
+  A09 up to 48/50 → A12, 42/22 closed hi-hat, 46/26 open hi-hat, 44 pedal, 49/59 → A13,
+  55 → A16, 52 and 10 → A15; 51, 53 and 57 play nothing (crash 1 and the ride bell stay free
+  unless you add notes in Settings).
   Supported: Roland TD-3/6/8/10 and TD-1/02/07/4/9/11/12/15/17/20/25/27/30/50 and VAD,
   Alesis Nitro/Turbo/Surge/Command/Crimson/Strike/Strata/DM10, Yamaha DTX400–DTX10 and DTX-PRO,
   and the General MIDI drum map (EFNOTE, Simmons, ATV, Millenium and most others). These are the
@@ -139,9 +142,10 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
 * **Sample loops**: off by default (*Settings → Playback*), so every hit plays its sample once.
   Some samples carry loop points; with *Play sample loops* on, pads in note-on mode repeat them
   for as long as the note is held.
-* **Touch screens**: drag lists (library, programs, settings) with a finger to scroll; drag a
-  sample or pad sideways onto the pads to use it. Library items play when you lift your finger,
-  so scrolling stays silent. The *Play* button under the waveform plays the selected pad.
+* **Touch screens**: drag lists (library, programs, settings) with a finger to scroll; flick the
+  library and it keeps gliding (*Settings → Library → Touch scrolling fling*: 0 stops when you
+  let go, 10 glides furthest; a tap stops it). Drag a sample or pad sideways onto the pads to use
+  it. Library items play when you lift your finger, so scrolling stays silent. The *Play* button under the waveform plays the selected pad.
 * **Header**: the open expansion's artwork (click it for its program list), the last MIDI note
   received with its velocity (it flashes on every hit); click the Kaia logo to open this GitHub page.
 * **Saving**: the DAW project stores the kit and every pad edit. Samples are referenced from their
@@ -164,7 +168,8 @@ Settings, presets and the library index live in one folder:
 * macOS: `~/Library/Application Support/Kaia/`
 * Windows: `%APPDATA%\Kaia\`
 
-`settings.xml` (recent files, library folder, drum module, learned notes, colours, loops),
+`settings.xml` (recent files, library folder, drum module, learned notes, colours, loops,
+library view and fling),
 `presets/*.kaiapreset`, `drum-maps/*.kaiamap` (your own drum maps), and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
 they are moved automatically. Kaia never writes anywhere else, and in particular never into your
 sample library or expansion files.

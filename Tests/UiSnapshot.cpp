@@ -153,6 +153,56 @@ int main (int argc, char** argv)
                     }
         pump (300);
         save (*editor, outDir.getChildFile ("library.png"));
+
+        // KAIA_SNAPSHOT_BENCH=1: how long one frame of the scrolling list takes to paint
+        if (auto* tree = findTree (*editor); tree != nullptr && juce::SystemStats::getEnvironmentVariable ("KAIA_SNAPSHOT_BENCH", {}) == "1")
+        {
+            auto* vp = tree->getViewport();
+            for (auto scale : { 1.0f, 2.0f })
+            {
+                juce::Image frame (juce::Image::RGB, juce::roundToInt ((float) tree->getWidth() * scale), juce::roundToInt ((float) tree->getHeight() * scale), true);
+                auto maxY = juce::jmax (1, vp->getViewedComponent()->getHeight() - vp->getViewHeight());
+                auto start = juce::Time::getMillisecondCounterHiRes();
+                constexpr int frames = 200;
+                for (int i = 0; i < frames; ++i)
+                {
+                    vp->setViewPosition (0, (i * 7) % maxY);
+                    juce::Graphics g (frame);
+                    g.addTransform (juce::AffineTransform::scale (scale));
+                    tree->paintEntireComponent (g, true);
+                }
+                std::cout << "library list: " << (juce::Time::getMillisecondCounterHiRes() - start) / frames
+                          << " ms per frame at scale " << scale << "\n";
+            }
+            vp->setViewPosition (0, 0);
+        }
+
+        // The tile view (covers load in the background)
+        std::function<juce::Button* (juce::Component&, const juce::String&)> findButton
+            = [&findButton] (juce::Component& c, const juce::String& text) -> juce::Button*
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (&c))
+                if (b->getButtonText() == text)
+                    return b;
+            for (auto* child : c.getChildren())
+                if (child->isVisible())
+                    if (auto* b = findButton (*child, text))
+                        return b;
+            return nullptr;
+        };
+        if (auto* tilesButton = findButton (*editor, "Tiles"))
+        {
+            tilesButton->triggerClick();
+            for (int i = 0; i < 5; ++i)
+            {
+                editor->createComponentSnapshot (editor->getLocalBounds());    // painting asks for the covers
+                pump (300);
+            }
+            save (*editor, outDir.getChildFile ("library-tiles.png"));
+            if (auto* b = findButton (*editor, "List"))
+                b->triggerClick();
+            pump (200);
+        }
     }
     click ("Settings");
     save (*editor, outDir.getChildFile ("settings.png"));

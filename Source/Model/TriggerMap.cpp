@@ -54,10 +54,16 @@ namespace
                  { 51, Z::Ride }, { 59, Z::Ride }, { 53, Z::RideBell } };
     }
 
-    // TD-10: as above, plus note 10 on the crash 2 edge pad.
+    // TD-10 (the owner's own module): the classic toms, snare and hi-hat, but the cymbals are
+    // 55 -> crash 2, 49 -> ride, 52 and 10 -> crash 2 edge; 51, 53 and 57 play nothing.
     DrumNoteTable rolandTd10()
     {
-        auto t = rolandClassic();
+        DrumNoteTable t;
+        for (auto& e : rolandClassic())
+            if (e.first < 49 || e.first == 50 || e.first == 52 || e.first == 58 || e.first == 59)
+                t.push_back (e);
+        t.push_back ({ 49, Z::Ride });
+        t.push_back ({ 55, Z::Crash2 });
         t.push_back ({ 10, Z::Crash2Edge });
         return t;
     }
