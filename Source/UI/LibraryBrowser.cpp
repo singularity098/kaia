@@ -9,20 +9,19 @@ class LibraryBrowser::Item : public juce::TreeViewItem
 public:
     explicit Item (LibraryBrowser& b) : browser (b) {}
 
-    int getItemHeight() const override { return 24; }
+    int getItemHeight() const override { return 36; }
 
     void paintItem (juce::Graphics& g, int width, int height) override
     {
         // Texts are measured once: painting runs for every visible row on every scroll step
-        static const juce::Font plainFont = uiFont (13.5f), boldFont = uiFont (13.5f, true),
-                                headingFont = uiFont (11.5f, true), detailFont = uiFont (11.5f);
+        auto& fonts = browser.fonts;
         if (! cached)
         {
             cached = true;
             text = isHeading() ? getText().toUpperCase() : getText();
             detail = getDetail();
             if (detail.isNotEmpty())
-                detailWidth = juce::GlyphArrangement::getStringWidthInt (detailFont, detail) + 8;
+                detailWidth = juce::GlyphArrangement::getStringWidthInt (fonts.detail, detail) + 8;
         }
 
         auto area = juce::Rectangle<int> (width, height);
@@ -36,12 +35,12 @@ public:
         if (detail.isNotEmpty())
         {
             g.setColour (Colours::textDim);
-            g.setFont (detailFont);
+            g.setFont (fonts.detail);
             g.drawText (detail, r.removeFromRight (juce::jmin (r.getWidth() / 2, detailWidth)), juce::Justification::centredRight);
         }
 
         g.setColour (isDisabled() ? Colours::textDim : (isSelected() ? Colours::accent : (isHeading() ? Colours::textDim : Colours::text)));
-        g.setFont (isHeading() ? headingFont : isBold() ? boldFont : plainFont);
+        g.setFont (isHeading() ? fonts.heading : isBold() ? fonts.bold : fonts.plain);
         g.drawText (text, r, juce::Justification::centredLeft, true);
     }
 
@@ -463,7 +462,7 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
 
     tree.setRootItemVisible (false);
     tree.setDefaultOpenness (false);
-    tree.setIndentSize (14);
+    tree.setIndentSize (32);         // also the width of the open/close triangle's click area
     tree.setColour (juce::TreeView::backgroundColourId, Colours::panel);
     tree.setColour (juce::TreeView::linesColourId, Colours::outline);
     tree.setColour (juce::TreeView::selectedItemBackgroundColourId, juce::Colours::transparentBlack);
@@ -715,7 +714,7 @@ void LibraryBrowser::mouseWheelMove (const juce::MouseEvent& e, const juce::Mous
         return;
 
     auto maxY = juce::jmax (0, vp->getViewedComponent()->getHeight() - vp->getViewHeight());
-    auto delta = (wheel.isReversed ? -wheel.deltaY : wheel.deltaY) * 14.0f * 18.0f;   // about two rows per wheel notch
+    auto delta = (wheel.isReversed ? -wheel.deltaY : wheel.deltaY) * 14.0f * 26.0f;   // about two rows per wheel notch
     if (std::abs (delta) < 0.01f)
         return;
 
@@ -765,7 +764,7 @@ void LibraryBrowser::syncScrollBar()
     // (ScrollBar notifies its listeners asynchronously, so changes made here must not notify)
     scrollBar.setRangeLimits (0.0, (double) vp->getViewedComponent()->getHeight(), juce::dontSendNotification);
     scrollBar.setCurrentRange ((double) vp->getViewPositionY(), (double) vp->getViewHeight(), juce::dontSendNotification);
-    scrollBar.setSingleStepSize (24.0);
+    scrollBar.setSingleStepSize (36.0);
 }
 
 void LibraryBrowser::scrollBarMoved (juce::ScrollBar*, double newRangeStart)

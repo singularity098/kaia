@@ -79,6 +79,17 @@ set(KAIA_PLUGIN_SOURCES
     Source/UI/SettingsPanel.cpp
     Source/UI/PluginEditor.cpp)
 
+# Jost, the UI font (static instances made by tools/make_fonts.py)
+if(KAIA_BUILD_PLUGIN OR KAIA_BUILD_HOST_TEST)
+    juce_add_binary_data(KaiaFonts
+        HEADER_NAME KaiaFonts.h
+        NAMESPACE KaiaFontData
+        SOURCES
+            Resources/Fonts/Jost-Light.ttf
+            Resources/Fonts/Jost-Regular.ttf
+            Resources/Fonts/Jost-Bold.ttf)
+endif()
+
 set(KAIA_COMMON_DEFS
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -127,6 +138,7 @@ target_compile_definitions(Kaia PUBLIC ${KAIA_COMMON_DEFS} JUCE_MODAL_LOOPS_PERM
 
 target_link_libraries(Kaia
     PRIVATE
+        KaiaFonts
         juce::juce_audio_utils
         juce::juce_audio_formats
         juce::juce_dsp
@@ -189,6 +201,6 @@ if(KAIA_BUILD_HOST_TEST)
     target_include_directories(KaiaUiSnapshot PRIVATE Source)
     target_compile_definitions(KaiaUiSnapshot PRIVATE ${KAIA_COMMON_DEFS} JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(KaiaUiSnapshot
-        PRIVATE juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
+        PRIVATE KaiaFonts juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         PUBLIC juce::juce_recommended_config_flags)
 endif()

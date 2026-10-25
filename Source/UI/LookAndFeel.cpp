@@ -1,12 +1,38 @@
 #include "LookAndFeel.h"
 #include "../Model/UserFiles.h"
+#include <KaiaFonts.h>
 
 namespace kaia
 {
 
+namespace
+{
+    // Jost (the font NAMsayin uses), embedded in three weights
+    struct JostTypefaces
+    {
+        static juce::Typeface::Ptr load (const char* data, int size)
+        {
+            return juce::Typeface::createSystemTypefaceFor (data, (size_t) size);
+        }
+
+        juce::Typeface::Ptr light   = load (KaiaFontData::JostLight_ttf, KaiaFontData::JostLight_ttfSize);
+        juce::Typeface::Ptr regular = load (KaiaFontData::JostRegular_ttf, KaiaFontData::JostRegular_ttfSize);
+        juce::Typeface::Ptr bold    = load (KaiaFontData::JostBold_ttf, KaiaFontData::JostBold_ttfSize);
+    };
+
+    // Jost has a small x-height for its height, so it's drawn larger than the sizes the layout
+    // names (which were chosen for the system sans-serif). Large plain text uses Light, smaller
+    // text Regular so it stays readable.
+    constexpr float kFontScale = 1.4f;
+    constexpr float kLightFromHeight = 24.0f;
+}
+
 juce::Font uiFont (float height, bool bold)
 {
-    return juce::Font (juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain));
+    juce::SharedResourcePointer<JostTypefaces> jost;
+    auto size = height * kFontScale;
+    auto& face = bold ? jost->bold : size >= kLightFromHeight ? jost->light : jost->regular;
+    return juce::Font (juce::FontOptions (face).withHeight (size));
 }
 
 const std::vector<AccentOption>& accentOptions()
@@ -250,6 +276,33 @@ void KaiaLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bo
 juce::Font KaiaLookAndFeel::getComboBoxFont (juce::ComboBox&)               { return uiFont (13.5f); }
 juce::Font KaiaLookAndFeel::getTextButtonFont (juce::TextButton&, int h)    { return uiFont (juce::jmin (14.0f, (float) h * 0.55f)); }
 juce::Font KaiaLookAndFeel::getLabelFont (juce::Label& l)                   { return l.getFont(); }
+juce::Font KaiaLookAndFeel::getPopupMenuFont()                              { return uiFont (14.0f); }
+juce::Font KaiaLookAndFeel::getAlertWindowTitleFont()                       { return uiFont (16.0f, true); }
+juce::Font KaiaLookAndFeel::getAlertWindowMessageFont()                     { return uiFont (14.0f); }
+juce::Font KaiaLookAndFeel::getAlertWindowFont()                            { return uiFont (13.0f); }
+
+juce::Typeface::Ptr KaiaLookAndFeel::getTypefaceForFont (const juce::Font& font)
+{
+    // Fonts JUCE makes itself (text editors, menus, dialogs) use Jost too
+    if (font.getTypefaceName() == juce::Font::getDefaultSansSerifFontName())
+        return uiFont (font.getHeight(), font.isBold()).getTypefacePtr();
+    return LookAndFeel_V4::getTypefaceForFont (font);
+}
+
+void KaiaLookAndFeel::drawTreeviewPlusMinusBox (juce::Graphics& g, const juce::Rectangle<float>& area, juce::Colour,
+                                                bool isOpen, bool isMouseOver)
+{
+    // A large triangle: the whole indent column is the button, so it's easy to hit
+    auto c = area.getCentre();
+    auto s = juce::jmin (area.getWidth(), area.getHeight()) * 0.2f;
+    juce::Path p;
+    if (isOpen)
+        p.addTriangle (c.x - s, c.y - s * 0.5f, c.x + s, c.y - s * 0.5f, c.x, c.y + s * 0.65f);
+    else
+        p.addTriangle (c.x - s * 0.5f, c.y - s, c.x - s * 0.5f, c.y + s, c.x + s * 0.65f, c.y);
+    g.setColour (isMouseOver ? Colours::accent : Colours::textDim);
+    g.fillPath (p);
+}
 
 void KaiaLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
 {

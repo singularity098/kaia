@@ -70,6 +70,11 @@ private:
     juce::Time lastWheelTime;
     juce::String pendingAudition;          // item to play when the click is released
 
+    struct Fonts
+    {
+        juce::Font plain = uiFont (18.0f), bold = uiFont (18.0f, true), heading = uiFont (13.0f, true), detail = uiFont (14.0f);
+    } fonts;
+
     std::map<juce::String, std::shared_ptr<const Kit>> parsedPrograms;
     juce::Rectangle<int> headerArea;
 

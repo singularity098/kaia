@@ -50,11 +50,14 @@ Source/
     SamplerEngine           voices, MIDI, layer selection, chokes, envelopes, SVF filter, multi-out
     SincTable               polyphase windowed-sinc tables (24 taps, 256 phases, 8 anti-alias bands)
   PluginProcessor           buses (Main + Aux 1-16), loader thread, state save/restore, edit API
-  UI/                       LookAndFeel (near-black theme, user accent colour, pad colour themes),
-                            PadGrid (MPC layout, pad 1 bottom-left, library drop target), PadEditor,
-                            ProgramBrowser, LibraryBrowser (TreeView, audition, drag to pads, own
-                            smooth wheel scrolling), SettingsPanel (drum map editor), PluginEditor
-                            (header: pack artwork, last MIDI note, GitHub link)
+  UI/                       LookAndFeel (near-black theme, Jost font via uiFont(), user accent colour,
+                            pad colour themes), PadGrid (MPC layout, pad 1 bottom-left, library
+                            drop target), PadEditor, ProgramBrowser, LibraryBrowser (TreeView,
+                            audition, drag to pads, own smooth wheel scrolling), SettingsPanel
+                            (drum map editor), PluginEditor (header: pack artwork, last MIDI note,
+                            GitHub link)
+Resources/Fonts/            Jost Light/Regular/Bold (static instances of NAMsayin's variable Jost, OFL),
+                            embedded as binary data (KaiaFonts)
 Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
@@ -62,6 +65,7 @@ Tests/
                             library.png/settings.png when given a library folder;
                             KAIA_SNAPSHOT_PAD_THEMES=1 adds one shot of the pads per colour theme)
 tools/
+  make_fonts.py             makes Resources/Fonts/ from Jost[wght].ttf (needs fontTools)
   make_demo_pack.py         generates "Kaia Demo Kit.xpn" (synthesized drums, safe to redistribute)
   sandbox-sysroot.sh        header-only sysroot for build machines without the distro -dev packages
   xatoms.c                  pre-registers X11 atoms so JUCE windows work on a bare Xvfb
@@ -70,6 +74,11 @@ packaging/install.sh        user/system install of the release archive (also `--
 build.sh                    one-command source build for users (`--deps`, `--install`)
 .github/workflows/build.yml CI: Linux (portable, ubuntu-22.04) + Windows + macOS, runs KaiaTests
 ```
+
+UI text: always use `uiFont (height, bold)`. It draws Jost 1.4x larger than the layout height (Jost
+has a small x-height), Regular below 24 px and Light above, Bold for bold text; the look-and-feel
+maps JUCE's own default fonts (menus, dialogs, text editors) to Jost too. Don't keep `Font`s in
+statics (they hold the typeface past JUCE's shutdown).
 
 Namespace is `kaia`. Code style follows JUCE (4-space indent, `function (args)` with a space,
 braces on their own line).

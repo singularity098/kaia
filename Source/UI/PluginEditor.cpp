@@ -227,6 +227,8 @@ void KaiaEditor::timerCallback()
 }
 
 //==============================================================================
+static constexpr int kLogoWidth = 196;     // the logo at the left of the header
+
 void KaiaEditor::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::background);
@@ -239,19 +241,19 @@ void KaiaEditor::paint (juce::Graphics& g)
     g.drawHorizontalLine (footerArea.getY(), 0.0f, (float) getWidth());
 
     // Logo: a small 2x2 pad block and the name
-    auto logo = headerArea.withWidth (150).reduced (16, 0);
+    auto logo = headerArea.withWidth (kLogoWidth).reduced (16, 0);
     {
-        auto icon = logo.removeFromLeft (20).withSizeKeepingCentre (20, 20).toFloat();
+        auto icon = logo.removeFromLeft (30).withSizeKeepingCentre (30, 30).toFloat();
         auto cell = icon.getWidth() / 2.0f;
         for (int i = 0; i < 4; ++i)
         {
-            auto r = juce::Rectangle<float> (icon.getX() + (float) (i % 2) * cell, icon.getY() + (float) (i / 2) * cell, cell, cell).reduced (1.5f);
+            auto r = juce::Rectangle<float> (icon.getX() + (float) (i % 2) * cell, icon.getY() + (float) (i / 2) * cell, cell, cell).reduced (2.0f);
             g.setColour (i == 1 ? Colours::text : Colours::accent);
-            g.fillRoundedRectangle (r, 2.0f);
+            g.fillRoundedRectangle (r, 3.0f);
         }
-        logo.removeFromLeft (9);
+        logo.removeFromLeft (12);
     }
-    g.setFont (uiFont (21.0f, true));
+    g.setFont (uiFont (27.0f, true));
     g.setColour (Colours::text);
     g.drawText ("Kaia", logo, juce::Justification::centredLeft);
 
@@ -312,7 +314,7 @@ void KaiaEditor::resized()
     footerArea = r.removeFromBottom (32);
 
     auto h = headerArea.reduced (12, 10);
-    h.removeFromLeft (130);
+    h.removeFromLeft (kLogoWidth - 20);
     auto nav = [&h] (juce::Component& c, int w) { c.setBounds (h.removeFromLeft (w).withSizeKeepingCentre (w, 38)); };
     nav (openButton, 76);
     h.removeFromLeft (6);

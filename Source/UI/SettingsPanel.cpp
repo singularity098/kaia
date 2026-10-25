@@ -637,7 +637,7 @@ void SettingsPanel::resized()
     headings[0]->setBounds (row (22));
     moduleBox.setBounds (row (28).withWidth (juce::jmin (w, 420)));
     y += 6;
-    moduleInfo.setBounds (row (54));
+    moduleInfo.setBounds (row (58));
     y += 4;
     mapView->setBounds (row (MapView::kCellHeight * 4).withWidth (juce::jmin (w, 560)));
     y += 6;
@@ -666,11 +666,12 @@ void SettingsPanel::resized()
     y += 18;
     headings[1]->setBounds (row (22));
     loopsToggle.setBounds (row (24));
-    loopsInfo.setBounds (row (40));
+    loopsInfo.setBounds (row (44));
 
     y += 18;
     headings[2]->setBounds (row (22));
-    libraryPath.setBounds (row (52));
+    libraryPath.setBounds (row (60));
+    y += 4;
     auto libButtons = row (26);
     chooseLibraryButton.setBounds (libButtons.removeFromLeft (130));
     libButtons.removeFromLeft (6);
@@ -687,7 +688,7 @@ void SettingsPanel::resized()
 
     y += 18;
     headings[5]->setBounds (row (22));
-    auto cfg = row (38);
+    auto cfg = row (58);
     showConfigButton.setBounds (cfg.removeFromRight (60).withHeight (26));
     configPath.setBounds (cfg);
     y += 8;

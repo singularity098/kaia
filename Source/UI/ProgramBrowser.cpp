@@ -14,7 +14,7 @@ ProgramBrowser::ProgramBrowser (KaiaProcessor& p) : processor (p)
     addAndMakeVisible (search);
 
     list.setModel (this);
-    list.setRowHeight (26);
+    list.setRowHeight (38);
     list.setColour (juce::ListBox::backgroundColourId, Colours::panel);
     list.setWantsKeyboardFocus (true);
     // Touch screens on Linux deliver mouse events: let any drag scroll (rows load on release)
@@ -92,8 +92,8 @@ void ProgramBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, in
     if (r.program < 0)
     {
         g.setColour (Colours::textDim);
-        g.setFont (uiFont (11.5f, true));
-        g.drawText (r.text.toUpperCase(), area.reduced (10, 0), juce::Justification::bottomLeft);
+        g.setFont (uiFont (13.0f, true));
+        g.drawText (r.text.toUpperCase(), area.reduced (10, 2), juce::Justification::bottomLeft);
         return;
     }
 
@@ -104,7 +104,7 @@ void ProgramBrowser::paintListBoxItem (int row, juce::Graphics& g, int width, in
         g.fillRoundedRectangle (area.reduced (4, 1).toFloat(), 4.0f);
     }
     g.setColour (current ? Colours::accent : Colours::text);
-    g.setFont (uiFont (14.0f));
+    g.setFont (uiFont (18.0f));
     g.drawText (r.text, area.reduced (16, 0), juce::Justification::centredLeft);
 }
 

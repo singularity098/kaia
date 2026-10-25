@@ -71,6 +71,13 @@ public:
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     juce::Font getLabelFont (juce::Label&) override;
+    juce::Font getPopupMenuFont() override;
+    juce::Font getAlertWindowTitleFont() override;
+    juce::Font getAlertWindowMessageFont() override;
+    juce::Font getAlertWindowFont() override;
+    juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
+    void drawTreeviewPlusMinusBox (juce::Graphics&, const juce::Rectangle<float>& area, juce::Colour backgroundColour,
+                                   bool isOpen, bool isMouseOver) override;
     void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
     void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
     void drawTooltip (juce::Graphics&, const juce::String& text, int width, int height) override;
@@ -78,6 +85,7 @@ public:
     void drawLinearSliderOutline (juce::Graphics&, int, int, int, int, juce::Slider::SliderStyle, juce::Slider&) override {}
 };
 
+// The UI font (Jost). Heights are layout sizes: the text is drawn somewhat larger (see kFontScale)
 juce::Font uiFont (float height, bool bold = false);
 
 }
