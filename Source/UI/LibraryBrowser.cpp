@@ -106,7 +106,7 @@ public:
 
     juce::var getDragSourceDescription() override
     {
-        if (dragIsVertical())
+        if (dragIsVertical() || browser.scroller->pressIsScrolling())
             return {};
         auto* o = new juce::DynamicObject();
         o->setProperty ("kaiaLibrary", "sample");
@@ -172,7 +172,7 @@ public:
 
     juce::var getDragSourceDescription() override
     {
-        if (dragIsVertical())
+        if (dragIsVertical() || browser.scroller->pressIsScrolling())
             return {};
         auto* o = new juce::DynamicObject();
         o->setProperty ("kaiaLibrary", "pad");
@@ -450,6 +450,312 @@ namespace
 }
 
 //==============================================================================
+// Packs as cover-art tiles. Covers are read and scaled on background threads, only for tiles on
+// screen; each tile is drawn once into an image at the screen's pixel scale, so scrolling only
+// copies images.
+class LibraryBrowser::TileView : public juce::Component
+{
+public:
+    explicit TileView (LibraryBrowser& b) : browser (b)
+    {
+        viewport.setViewedComponent (&grid, false);
+        viewport.setScrollBarsShown (false, false, false, false);
+        addAndMakeVisible (viewport);
+        bar.setAutoHide (true);
+        addAndMakeVisible (bar);
+        scroller = std::make_unique<KineticScroller> (viewport, viewport, &bar);
+    }
+
+    ~TileView() override
+    {
+        pool.removeAllJobs (true, 2000);
+    }
+
+    void setPacks (std::shared_ptr<const LibraryIndex> newIndex, std::vector<int> newPacks)
+    {
+        if (newIndex == index && newPacks == packs)
+            return;
+        ++shared->generation;        // queued cover loads refer to the old positions
+        index = std::move (newIndex);
+        for (auto& entry : artwork)
+            entry.second.tile = {};     // redrawn with the current colours
+        packs = std::move (newPacks);
+        layout();
+        grid.repaint();
+    }
+
+    void setColumns (int n)
+    {
+        columns = juce::jlimit (2, 4, n);
+        layout();
+        grid.repaint();
+    }
+
+    void setFling (float f)              { scroller->setFling (f); }
+    void syncScrollBar()                 { scroller->syncScrollBar(); }
+    bool isEmpty() const                 { return packs.empty(); }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        bar.setBounds (r.removeFromRight (10));
+        r.removeFromRight (2);
+        viewport.setBounds (r);
+        layout();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (Colours::panel);
+    }
+
+private:
+    static constexpr int kGap = 12, kCaption = 46;
+
+    struct Art
+    {
+        enum State { unrequested, loading, ready, none };
+        State state = unrequested;
+        juce::Image source;                     // cover, at most kSourceSize pixels
+        juce::Image tile;                       // the whole tile, at the screen's pixel scale
+        int tileWidth = 0;
+        float tileScale = 0.0f;
+        juce::uint32 lastUsed = 0;
+    };
+    static constexpr int kSourceSize = 512;
+
+    int tileWidth() const    { return juce::jmax (40, (grid.getWidth() - kGap * (columns - 1)) / columns); }
+    int rowHeight() const    { return tileWidth() + kCaption + kGap; }
+
+    void layout()
+    {
+        auto w = viewport.getMaximumVisibleWidth();
+        auto rows = ((int) packs.size() + columns - 1) / columns;
+        grid.setSize (w, juce::jmax (viewport.getHeight(), rows * rowHeight()));
+        scroller->syncScrollBar();
+    }
+
+    const LibraryPack* packAt (int position) const
+    {
+        if (index == nullptr || position < 0 || position >= (int) packs.size())
+            return nullptr;
+        return &index->packs[(size_t) packs[(size_t) position]];
+    }
+
+    juce::Rectangle<int> tileBounds (int position) const
+    {
+        auto w = tileWidth();
+        return { (position % columns) * (w + kGap), (position / columns) * rowHeight(), w, w + kCaption };
+    }
+
+    int positionAt (juce::Point<int> p) const
+    {
+        auto col = p.x / (tileWidth() + kGap);
+        auto pos = (p.y / rowHeight()) * columns + col;
+        return col < columns && tileBounds (pos).contains (p) && pos < (int) packs.size() ? pos : -1;
+    }
+
+    //==========================================================================
+    class Grid : public juce::Component
+    {
+    public:
+        explicit Grid (TileView& v) : view (v) { setOpaque (true); }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (Colours::panel);
+            view.paintTiles (g);
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            // Taps only: not the end of a scroll, nor the press that stopped a fling
+            if (view.scroller->pressIsScrolling() || e.getDistanceFromDragStart() > 12 || e.mods.isPopupMenu())
+                return;
+            auto pos = view.positionAt (e.getMouseDownPosition());
+            if (auto* pack = view.packAt (pos); pack != nullptr && ! pack->isProtected)
+                view.browser.pickPack (view.packs[(size_t) pos]);
+        }
+
+    private:
+        TileView& view;
+    };
+
+    void paintTiles (juce::Graphics& g)
+    {
+        auto clip = g.getClipBounds();
+        auto rowH = rowHeight();
+        auto first = juce::jmax (0, clip.getY() / rowH) * columns;
+        auto last = juce::jmin ((int) packs.size() - 1, (clip.getBottom() / rowH + 1) * columns - 1);
+        auto scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+        auto current = browser.processor.getPackFile();
+        ++paintCount;
+
+        // Covers for the tiles on screen and a row either side
+        auto visibleTop = viewport.getViewPositionY();
+        shared->wantedFirst = juce::jmax (0, visibleTop / rowH - 1) * columns;
+        shared->wantedLast = ((visibleTop + viewport.getViewHeight()) / rowH + 2) * columns - 1;
+
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+        for (int pos = first; pos <= last; ++pos)
+        {
+            auto* pack = packAt (pos);
+            auto bounds = tileBounds (pos);
+            if (pack == nullptr || ! bounds.intersects (clip))
+                continue;
+
+            auto& art = artFor (*pack, pos);
+            art.lastUsed = paintCount;
+            if (! art.tile.isValid() || art.tileWidth != bounds.getWidth() || ! juce::approximatelyEqual (art.tileScale, scale))
+                renderTile (art, *pack, bounds.getWidth(), scale);
+            g.drawImage (art.tile, bounds.toFloat());
+
+            if (pack->file == current || pack->file == browser.packToReveal)
+            {
+                g.setColour (Colours::accent);
+                g.drawRoundedRectangle (bounds.toFloat().reduced (1.0f), 6.0f, 2.0f);
+            }
+        }
+        evictOldArt();
+    }
+
+    Art& artFor (const LibraryPack& pack, int position)
+    {
+        auto key = pack.file.getFullPathName();
+        auto& art = artwork[key];
+        if (art.state == Art::unrequested && ! pack.isProtected)
+        {
+            art.state = Art::loading;
+            pool.addJob ([safe = juce::Component::SafePointer<TileView> (this), shared = shared, key, file = pack.file, position,
+                          generation = shared->generation.load()]
+            {
+                // Scrolled past before its turn came: forget it, it is asked for again when seen
+                if (shared->generation.load() != generation || position < shared->wantedFirst.load() || position > shared->wantedLast.load())
+                {
+                    finishLoad (safe, key, {}, Art::unrequested);
+                    return;
+                }
+                juce::MemoryBlock data;
+                juce::Image image;
+                if (KitLoader::readPackArtwork (file, data))
+                    image = juce::ImageFileFormat::loadFrom (data.getData(), data.getSize());
+                if (image.isValid() && juce::jmax (image.getWidth(), image.getHeight()) > kSourceSize)
+                {
+                    auto s = (float) kSourceSize / (float) juce::jmax (image.getWidth(), image.getHeight());
+                    image = image.rescaled (juce::roundToInt ((float) image.getWidth() * s), juce::roundToInt ((float) image.getHeight() * s),
+                                            juce::Graphics::highResamplingQuality);
+                }
+                finishLoad (safe, key, image, image.isValid() ? Art::ready : Art::none);
+            });
+        }
+        return art;
+    }
+
+    static void finishLoad (juce::Component::SafePointer<TileView> safe, juce::String key, juce::Image image, Art::State state)
+    {
+        juce::MessageManager::callAsync ([safe, key, image, state]
+        {
+            if (safe == nullptr)
+                return;
+            auto it = safe->artwork.find (key);
+            if (it == safe->artwork.end())
+                return;
+            it->second.state = state;
+            it->second.source = image;
+            it->second.tile = {};
+            safe->grid.repaint();       // also asks again for covers skipped while still on screen
+        });
+    }
+
+    void evictOldArt()
+    {
+        constexpr size_t kMaxCovers = 160;
+        if (artwork.size() <= kMaxCovers)
+            return;
+        std::vector<std::pair<juce::uint32, juce::String>> ages;
+        for (auto& [key, art] : artwork)
+            if (art.state != Art::loading && art.lastUsed != paintCount)
+                ages.push_back ({ art.lastUsed, key });
+        std::sort (ages.begin(), ages.end());
+        for (size_t i = 0; i < ages.size() && artwork.size() > kMaxCovers * 3 / 4; ++i)
+            artwork.erase (ages[i].second);
+    }
+
+    void renderTile (Art& art, const LibraryPack& pack, int width, float scale)
+    {
+        auto height = width + kCaption;
+        art.tileWidth = width;
+        art.tileScale = scale;
+        art.tile = juce::Image (juce::Image::RGB, juce::jmax (1, juce::roundToInt ((float) width * scale)),
+                                juce::jmax (1, juce::roundToInt ((float) height * scale)), false);
+        juce::Graphics g (art.tile);
+        g.addTransform (juce::AffineTransform::scale (scale));
+        g.fillAll (Colours::panel);
+
+        auto cover = juce::Rectangle<float> (0.0f, 0.0f, (float) width, (float) width);
+        juce::Path clip;
+        clip.addRoundedRectangle (cover, 6.0f);
+        g.setColour (Colours::panelRaised);
+        g.fillPath (clip);
+
+        if (art.source.isValid())
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (clip);
+            g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+            g.drawImage (art.source, cover, juce::RectanglePlacement::fillDestination);
+        }
+        else
+        {
+            // No cover: the pack's initials
+            auto words = juce::StringArray::fromTokens (pack.title, " _-", "");
+            words.removeEmptyStrings();
+            juce::String initials;
+            for (int i = 0; i < juce::jmin (2, words.size()); ++i)
+                initials << words[i].substring (0, 1).toUpperCase();
+            g.setColour (pack.isProtected ? Colours::textDim : Colours::accent.withAlpha (0.8f));
+            g.setFont (uiFont ((float) width * 0.22f, true));
+            g.drawText (initials, cover, juce::Justification::centred, false);
+        }
+        g.setColour (Colours::outline);
+        g.strokePath (clip, juce::PathStrokeType (1.0f));
+
+        auto caption = juce::Rectangle<int> (0, width + 4, width, kCaption - 4).reduced (2, 0);
+        g.setColour (pack.isProtected ? Colours::textDim : Colours::text);
+        g.setFont (uiFont (14.0f, true));
+        g.drawText (pack.title, caption.removeFromTop (22), juce::Justification::centredLeft, true);
+
+        juce::StringArray parts;
+        if (pack.isProtected)
+            parts.add ("copy-protected");
+        if (! pack.programs.isEmpty()) parts.add (juce::String (pack.programs.size()) + (pack.programs.size() == 1 ? " program" : " programs"));
+        if (! pack.samples.isEmpty())  parts.add (juce::String (pack.samples.size()) + (pack.samples.size() == 1 ? " sample" : " samples"));
+        g.setColour (Colours::textDim);
+        g.setFont (uiFont (12.0f));
+        g.drawText (parts.joinIntoString (", "), caption.removeFromTop (18), juce::Justification::centredLeft, true);
+    }
+
+    LibraryBrowser& browser;
+    Grid grid { *this };
+    juce::Viewport viewport;
+    juce::ScrollBar bar { true };
+    std::unique_ptr<KineticScroller> scroller;
+
+    std::shared_ptr<const LibraryIndex> index;
+    std::vector<int> packs;                 // indices into index->packs, in display order
+    int columns = 3;
+
+    std::map<juce::String, Art> artwork;    // by pack path
+    juce::uint32 paintCount = 0;
+    struct Shared                           // read by the cover loading jobs
+    {
+        std::atomic<int> wantedFirst { 0 }, wantedLast { 0 }, generation { 0 };
+    };
+    std::shared_ptr<Shared> shared = std::make_shared<Shared>();
+    juce::ThreadPool pool { 2 };
+};
+
+//==============================================================================
 LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
 {
     search.setTextToShowWhenEmpty ("Search programs and samples", Colours::textDim);
@@ -468,17 +774,29 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
     tree.setColour (juce::TreeView::selectedItemBackgroundColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (tree);
 
-    // Scrolling: drag anywhere (touch screens), and the wheel glides instead of jumping. The tree's
-    // own scroll bars are hidden so wheel events reach mouseWheelMove(); scrollBar replaces them.
-    if (auto* vp = tree.getViewport())
-    {
-        vp->setScrollOnDragMode (juce::Viewport::ScrollOnDragMode::all);
-        vp->setScrollBarsShown (false, false, false, false);
-    }
+    // Scrolling: drag anywhere (touch screens) with momentum, and the wheel glides instead of
+    // jumping (KineticScroller). The tree's own scroll bars are hidden; scrollBar replaces them.
+    tree.getViewport()->setScrollBarsShown (false, false, false, false);
     scrollBar.setAutoHide (true);
-    scrollBar.addListener (this);
     addAndMakeVisible (scrollBar);
+    scroller = std::make_unique<KineticScroller> (*tree.getViewport(), tree, &scrollBar);
     tree.addMouseListener (this, true);
+
+    tiles = std::make_unique<TileView> (*this);
+    addChildComponent (*tiles);
+    tilesButton.setTooltip ("Show the packs as cover art, or as the list");
+    tilesButton.onClick = [this] { setTileMode (! tileMode, true); };
+    addAndMakeVisible (tilesButton);
+    for (int n = 2; n <= 4; ++n)
+    {
+        auto* b = columnButtons.add (new juce::TextButton (juce::String (n)));
+        b->setTooltip (juce::String (n) + " columns");
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (0x4b41);
+        b->setConnectedEdges ((n > 2 ? juce::Button::ConnectedOnLeft : 0) | (n < 4 ? juce::Button::ConnectedOnRight : 0));
+        b->onClick = [this, n] { setTileColumns (n, true); };
+        addChildComponent (b);
+    }
 
     closeButton.onClick = [this] { if (onClose) onClose(); };
     rescanButton.setTooltip ("Scan the library folder again");
@@ -497,6 +815,12 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
     hint.setMinimumHorizontalScale (0.7f);
     addAndMakeVisible (hint);
 
+    {
+        juce::SharedResourcePointer<SharedSettings> settings;
+        setTileColumns (settings->get().getIntValue ("libraryColumns", 3), false);
+        setTileMode (settings->get().getValue ("libraryView") == "tiles", false);
+    }
+
     library->addChangeListener (this);
     refresh();
 }
@@ -504,7 +828,7 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
 LibraryBrowser::~LibraryBrowser()
 {
     tree.removeMouseListener (this);
-    scrollBar.removeListener (this);
+    scroller = nullptr;
     library->removeChangeListener (this);
     tree.setRootItem (nullptr);
 }
@@ -518,6 +842,9 @@ void LibraryBrowser::visibilityChanged()
 {
     if (isVisible())
     {
+        auto fling = KineticScroller::flingFromSettings();     // may have changed in Settings
+        scroller->setFling (fling);
+        tiles->setFling (fling);
         library->ensureScanned();
         refresh();
         startTimerHz (20);
@@ -624,12 +951,31 @@ void LibraryBrowser::rebuildTree()
     for (int i = 0; i < root->getNumSubItems(); ++i)
         root->getSubItem (i)->setOpen (true);     // headings are always open
 
+    // Tiles: every pack whose title or path matches all the words
+    {
+        auto words = juce::StringArray::fromTokens (filter, " ", "\"");
+        words.removeEmptyStrings();
+        std::vector<int> packs;
+        for (int i = 0; index != nullptr && i < (int) index->packs.size(); ++i)
+        {
+            auto& pack = index->packs[(size_t) i];
+            bool ok = true;
+            for (auto& w : words)
+                ok = ok && (pack.title.containsIgnoreCase (w) || pack.relativePath.containsIgnoreCase (w));
+            if (ok)
+                packs.push_back (i);
+        }
+        tiles->setPacks (index, std::move (packs));
+    }
+
     // What to tell the user
     juce::String text;
     if (library->getRoot() == juce::File())
         text = "Choose your library folder (Folder...) to browse all your expansions and samples here.";
-    else if (filter.isNotEmpty() && root->getNumSubItems() == 0)
+    else if (filter.isNotEmpty() && (tileMode ? tiles->isEmpty() : root->getNumSubItems() == 0))
         text = "Nothing matches \"" + filter + "\".";
+    else if (tileMode)
+        text = "Tap a pack to load it. Switch to List to see its programs, pads and samples.";
     else
         text = "Click to hear. Double-click (or drag onto a pad) to use it on pad " + targetPadName() + ".";
     hint.setText (text, juce::dontSendNotification);
@@ -687,117 +1033,132 @@ void LibraryBrowser::resized()
     rescanButton.setBounds (buttons.removeFromRight (72));
     buttons.removeFromRight (6);
     folderButton.setBounds (buttons.removeFromRight (76));
+    buttons.removeFromRight (6);
+    tilesButton.setBounds (buttons.removeFromRight (60));
 
     r.removeFromTop (6);
     auto row = r.removeFromTop (28);
-    autoPreview.setBounds (row.removeFromRight (118));
+    auto right = row.removeFromRight (118);
+    autoPreview.setBounds (right);
+    auto columnsArea = right.withSizeKeepingCentre (3 * 34, 26).withRightX (right.getRight());
+    for (auto* b : columnButtons)
+        b->setBounds (columnsArea.removeFromLeft (34));
     row.removeFromRight (8);
     search.setBounds (row);
     r.removeFromTop (6);
     hint.setBounds (r.removeFromBottom (20));
     r.removeFromBottom (4);
+    tiles->setBounds (r);
     scrollBar.setBounds (r.removeFromRight (10));
     r.removeFromRight (2);
     tree.setBounds (r);
-    syncScrollBar();
+    scroller->syncScrollBar();
+}
+
+void LibraryBrowser::setTileMode (bool shouldShowTiles, bool save)
+{
+    tileMode = shouldShowTiles;
+    tilesButton.setButtonText (tileMode ? "List" : "Tiles");
+    tiles->setVisible (tileMode);
+    tree.setVisible (! tileMode);
+    scrollBar.setVisible (! tileMode);
+    autoPreview.setVisible (! tileMode);
+    for (auto* b : columnButtons)
+        b->setVisible (tileMode);
+    search.setTextToShowWhenEmpty (tileMode ? "Search packs" : "Search programs and samples", Colours::textDim);
+    scroller->stop();
+
+    if (save)
+    {
+        juce::SharedResourcePointer<SharedSettings> settings;
+        settings->get().setValue ("libraryView", tileMode ? "tiles" : "list");
+        settings->get().saveIfNeeded();
+        rebuildTree();
+    }
+    if (! tileMode && packToReveal != juce::File())
+    {
+        if (search.getText().isNotEmpty())
+        {
+            search.clear();         // the search results don't show packs
+            rebuildTree();
+        }
+        revealPack (std::exchange (packToReveal, juce::File()));
+    }
+    repaint();
+}
+
+void LibraryBrowser::setTileColumns (int columns, bool save)
+{
+    tileColumns = juce::jlimit (2, 4, columns);
+    columnButtons[tileColumns - 2]->setToggleState (true, juce::dontSendNotification);
+    tiles->setColumns (tileColumns);
+    if (save)
+    {
+        juce::SharedResourcePointer<SharedSettings> settings;
+        settings->get().setValue ("libraryColumns", tileColumns);
+        settings->get().saveIfNeeded();
+    }
+}
+
+void LibraryBrowser::pickPack (int packIndex)
+{
+    if (index == nullptr || packIndex < 0 || packIndex >= (int) index->packs.size())
+        return;
+    auto& pack = index->packs[(size_t) packIndex];
+    processor.openPack (pack.file);
+    packToReveal = pack.file;           // shown open when the list comes back
+    tiles->repaint();
+}
+
+void LibraryBrowser::revealPack (const juce::File& packFile)
+{
+    // The pack in the list (when the search shows it): open, selected and scrolled to
+    if (root == nullptr)
+        return;
+    for (int h = 0; h < root->getNumSubItems(); ++h)
+    {
+        auto* heading = root->getSubItem (h);
+        for (int i = 0; i < heading->getNumSubItems(); ++i)
+        {
+            auto* item = heading->getSubItem (i);
+            if (item->getUniqueName() != "k:" + packFile.getFullPathName())
+                continue;
+            item->setOpen (true);
+            item->setSelected (true, true, juce::dontSendNotification);
+            // Positions are worked out asynchronously after opening
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryBrowser> (this), id = item->getItemIdentifierString()]
+            {
+                if (safe == nullptr)
+                    return;
+                if (auto* it = safe->tree.findItemFromIdentifierString (id))
+                    safe->scroller->scrollTo (it->getItemPosition (false).getY() - 8);
+            });
+            return;
+        }
+    }
 }
 
 //==============================================================================
-void LibraryBrowser::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
-{
-    // Arrives from the tree (its scroll bars are hidden, so its viewport passes wheel events up);
-    // the copy delivered to the mouse listener on the tree is ignored.
-    // The tree's item components pass each event up twice (as children and to their listener)
-    auto* vp = tree.getViewport();
-    if (e.eventComponent != this || vp == nullptr || e.mods.isCtrlDown() || e.mods.isCommandDown() || e.mods.isAltDown()
-         || std::exchange (lastWheelTime, e.eventTime) == e.eventTime)
-        return;
-
-    auto maxY = juce::jmax (0, vp->getViewedComponent()->getHeight() - vp->getViewHeight());
-    auto delta = (wheel.isReversed ? -wheel.deltaY : wheel.deltaY) * 14.0f * 26.0f;   // about two rows per wheel notch
-    if (std::abs (delta) < 0.01f)
-        return;
-
-    if (wheel.isSmooth)
-    {
-        // Touchpads already send small, smooth steps
-        scrollTarget = juce::jlimit (0.0, (double) maxY, (double) vp->getViewPositionY() - delta);
-        scrollPosition = scrollTarget;
-        vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (scrollTarget));
-        syncScrollBar();
-        return;
-    }
-
-    // Mouse wheel notches: glide to the new position over a few frames
-    if (! scrollAnimating)
-        scrollPosition = scrollTarget = vp->getViewPositionY();
-    scrollTarget = juce::jlimit (0.0, (double) maxY, scrollTarget - delta);
-    if (! scrollAnimating)
-    {
-        scrollAnimating = true;
-        scrollAnimator.startTimerHz (60);
-    }
-}
-
-void LibraryBrowser::animateScroll()
-{
-    auto* vp = tree.getViewport();
-    if (vp == nullptr || std::abs (scrollTarget - scrollPosition) < 0.5)
-    {
-        if (vp != nullptr)
-            vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (scrollTarget));
-        scrollAnimating = false;
-        scrollAnimator.stopTimer();
-        syncScrollBar();
-        return;
-    }
-    scrollPosition += (scrollTarget - scrollPosition) * 0.32;
-    vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (scrollPosition));
-    syncScrollBar();
-}
-
-void LibraryBrowser::syncScrollBar()
-{
-    auto* vp = tree.getViewport();
-    if (vp == nullptr || vp->getViewedComponent() == nullptr)
-        return;
-    // (ScrollBar notifies its listeners asynchronously, so changes made here must not notify)
-    scrollBar.setRangeLimits (0.0, (double) vp->getViewedComponent()->getHeight(), juce::dontSendNotification);
-    scrollBar.setCurrentRange ((double) vp->getViewPositionY(), (double) vp->getViewHeight(), juce::dontSendNotification);
-    scrollBar.setSingleStepSize (36.0);
-}
-
-void LibraryBrowser::scrollBarMoved (juce::ScrollBar*, double newRangeStart)
-{
-    if (auto* vp = tree.getViewport())
-    {
-        scrollAnimating = false;
-        scrollAnimator.stopTimer();
-        scrollPosition = scrollTarget = newRangeStart;
-        vp->setViewPosition (vp->getViewPositionX(), juce::roundToInt (newRangeStart));
-    }
-}
-
-void LibraryBrowser::mouseDrag (const juce::MouseEvent&)
-{
-    // Dragging the list to scroll
-    scrollAnimating = false;
-    scrollAnimator.stopTimer();
-    syncScrollBar();
-}
-
 void LibraryBrowser::mouseUp (const juce::MouseEvent& e)
 {
+    // Releasing a click plays the item; the end of a scroll (or a touch that stopped one) doesn't
     auto pending = std::exchange (pendingAudition, juce::String());
-    if (pending.isNotEmpty() && ! e.mouseWasDraggedSinceMouseDown())
+    if (pending.isNotEmpty() && ! scroller->pressIsScrolling() && e.getDistanceFromDragStart() < 12)
         if (auto* item = dynamic_cast<Item*> (tree.findItemFromIdentifierString (pending)))
             item->audition();
 }
 
 void LibraryBrowser::timerCallback()
 {
-    // Keeps the scroll bar in step with drag-scrolling momentum, opening folders and so on
-    syncScrollBar();
+    // Keeps the scroll bars in step with opening folders and so on
+    if (! scroller->isMoving())
+        scroller->syncScrollBar();
+    tiles->syncScrollBar();
+    if (tileMode && processor.getPackFile() != shownPackFile)
+    {
+        shownPackFile = processor.getPackFile();     // the loaded pack's tile is highlighted
+        tiles->repaint();
+    }
 }
 
 void LibraryBrowser::paint (juce::Graphics& g)
@@ -806,7 +1167,7 @@ void LibraryBrowser::paint (juce::Graphics& g)
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
 
     auto h = headerArea;
-    h.removeFromRight (230);
+    h.removeFromRight (300);
     g.setColour (Colours::text);
     g.setFont (uiFont (17.0f, true));
     g.drawText ("Library", h.removeFromTop (26), juce::Justification::centredLeft);

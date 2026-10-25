@@ -1,4 +1,5 @@
 #include "SettingsPanel.h"
+#include "KineticScroller.h"
 
 namespace kaia
 {
@@ -293,6 +294,21 @@ SettingsPanel::SettingsPanel (KaiaProcessor& p) : processor (p)
     rescanButton.onClick = [this] { library->rescan(); };
     content.addAndMakeVisible (chooseLibraryButton);
     content.addAndMakeVisible (rescanButton);
+
+    flingLabel.setText ("Touch scrolling fling", juce::dontSendNotification);
+    flingLabel.setFont (uiFont (13.0f));
+    flingLabel.setColour (juce::Label::textColourId, Colours::text);
+    content.addAndMakeVisible (flingLabel);
+    flingSlider.setRange (0.0, 10.0, 1.0);
+    flingSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 40, 22);
+    flingSlider.setTooltip ("How far the library keeps gliding after you flick it: 0 stops as soon as you let go, 10 glides the furthest");
+    flingSlider.onValueChange = [this]
+    {
+        juce::SharedResourcePointer<SharedSettings> settings;
+        settings->get().setValue ("flingStrength", flingSlider.getValue() / 10.0);
+        settings->get().saveIfNeeded();
+    };
+    content.addAndMakeVisible (flingSlider);
 
     // Colours
     swatches = std::make_unique<Swatches>();
@@ -612,6 +628,7 @@ void SettingsPanel::refresh()
                          + "\nKaia only reads from the library: files there are never changed.",
                          juce::dontSendNotification);
     rescanButton.setEnabled (root != juce::File());
+    flingSlider.setValue (std::round (KineticScroller::flingFromSettings() * 10.0f), juce::dontSendNotification);
 
     configPath.setText ("Settings and presets: " + UserFiles::configDirectory().getFullPathName()
                         + "\nPresets are saved in " + UserFiles::presetsDirectory().getFullPathName(), juce::dontSendNotification);
@@ -676,6 +693,10 @@ void SettingsPanel::resized()
     chooseLibraryButton.setBounds (libButtons.removeFromLeft (130));
     libButtons.removeFromLeft (6);
     rescanButton.setBounds (libButtons.removeFromLeft (80));
+    y += 8;
+    auto flingRow = row (26);
+    flingLabel.setBounds (flingRow.removeFromLeft (160));
+    flingSlider.setBounds (flingRow.withWidth (juce::jmin (flingRow.getWidth(), 300)));
 
     y += 18;
     headings[3]->setBounds (row (22));

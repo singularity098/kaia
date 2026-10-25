@@ -56,6 +56,10 @@ namespace KitLoader
     // Tries to find missing samples by name below `folder` (after the user moved files).
     int relinkMissing (Kit& kit, const juce::File& folder);
 
+    // Cover art of a pack (.xpn or folder) without listing its programs: the image Expansion.xml
+    // names, else an image file at the top of the pack. Safe to call from any thread.
+    bool readPackArtwork (const juce::File& fileOrFolder, juce::MemoryBlock& image);
+
     juce::String fileFilter();   // wildcard pattern for file choosers
 }
 

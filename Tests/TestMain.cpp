@@ -719,6 +719,8 @@ static void testXpn()
     add ("Kits/Kit Two.xpm", juce::MemoryBlock (makeXpmXml ("Kit Two", { XPad { 1, { { "XSnare" } } } }, { { 1, 40 } }).toRawUTF8(),
                                                  makeXpmXml ("Kit Two", { XPad { 1, { { "XSnare" } } } }, { { 1, 40 } }).getNumBytesAsUTF8()));
     add ("__MACOSX/Kits/._Kit One.xpm", juce::MemoryBlock (16, true));
+    add ("Cover.png", juce::MemoryBlock ("cover bytes", 11));
+    add ("other.jpg", juce::MemoryBlock ("other", 5));
 
     xpnFile.deleteFile();
     {
@@ -733,6 +735,16 @@ static void testXpn()
     CHECK (info.title == "Test Expansion" && info.manufacturer == "Kaia Tests", "expansion info: " << info.title);
     if (list.size() != 2) return;
     CHECK (list[0].name == "Kit One" && list[0].location.inArchive(), "program inside archive");
+    {
+        juce::MemoryBlock cover;
+        CHECK (KitLoader::readPackArtwork (xpnFile, cover) && cover == juce::MemoryBlock ("cover bytes", 11), "cover art named by Expansion.xml");
+        auto folder = workDir.getChildFile ("Cover Folder");
+        folder.createDirectory();
+        folder.getChildFile ("a.png").replaceWithText ("a");
+        folder.getChildFile ("Folder.jpg").replaceWithText ("folder art");
+        CHECK (KitLoader::readPackArtwork (folder, cover) && cover.toString() == "folder art", "folder pack: folder.jpg preferred");
+        folder.deleteRecursively();
+    }
 
     auto r = KitLoader::loadProgram (list[0].location);
     CHECK (r.ok, "load program from XPN: " << r.error);
@@ -1172,16 +1184,17 @@ static void testTriggerMap()
     CHECK (plays (40) == 4, "TD-10 snare rim (40) -> A05");
     CHECK (plays (41) == 8 && plays (39) == 8, "TD-10 floor tom head and rim -> A09");
     CHECK (plays (48) == 11 && plays (50) == 11, "TD-10 high tom head and rim -> A12");
-    CHECK (plays (51) == 12 && plays (53) == 13 && plays (57) == 15 && plays (52) == 14, "ride A13, bell A14, crash 2 A16, its edge A15");
-    CHECK (plays (55) == 6 && plays (49) == 6 && plays (10) == 14, "crash 1 -> A07, note 10 -> A15");
+    CHECK (plays (49) == 12 && plays (59) == 12 && plays (55) == 15 && plays (52) == 14 && plays (10) == 14,
+           "TD-10 ride 49/59 -> A13, crash 2 55 -> A16, its edge 52/10 -> A15");
+    CHECK (table[51].empty() && table[53].empty() && table[57].empty(), "TD-10 leaves 51, 53 and 57 unmapped");
     CHECK (table[37].empty() && table[60].empty(), "notes the module doesn't send are ignored");
     CHECK (td10.notesForPad (kit, 7) == std::vector<int> ({ 26, 46 }), "notes for the open hi-hat pad");
 
     // Editing the note table
     {
         auto edited = td10;
-        edited.moveNoteToZone (51, 15);
-        CHECK (edited.isEdited() && edited.notesForZone (15) == std::vector<int> ({ 57, 51 }) && edited.notesForZone (12) == std::vector<int> { 59 },
+        edited.moveNoteToZone (59, 15);
+        CHECK (edited.isEdited() && edited.notesForZone (15) == std::vector<int> ({ 55, 59 }) && edited.notesForZone (12) == std::vector<int> { 49 },
                "moving a note to another pad");
         edited.setZoneNotes (2, { 42, 22, 21 });
         edited.removeNote (22, 2);

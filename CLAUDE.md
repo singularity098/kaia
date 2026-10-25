@@ -41,7 +41,8 @@ Source/
     XpmParser               XPM XML + JSON  -> Kit (sample *names*, resolved later)
     PgmParser               MPC1000-family, MPC2000XL, MPC3000 .pgm -> Kit
     KitLoader               listPrograms (folder / xpn / siblings), parseProgram (+ sample resolution),
-                            loadSamples (parallel decode, weak cache), reloadKit, relinkMissing
+                            loadSamples (parallel decode, weak cache), reloadKit, relinkMissing,
+                            readPackArtwork (cover only, for the library tiles)
     Library                 scan of the library folder into packs (xpn / program folder / sample
                             folder), XML cache, LibraryService (shared, background scan thread)
   Engine/
@@ -53,7 +54,8 @@ Source/
   UI/                       LookAndFeel (near-black theme, Jost font via uiFont(), user accent colour,
                             pad colour themes), PadGrid (MPC layout, pad 1 bottom-left, library
                             drop target), PadEditor, ProgramBrowser, LibraryBrowser (TreeView,
-                            audition, drag to pads, own smooth wheel scrolling), SettingsPanel
+                            audition, drag to pads; TileView: pack covers in 2-4 columns),
+                            KineticScroller (drag/fling/wheel scrolling on VBlank), SettingsPanel
                             (drum map editor), PluginEditor (header: pack artwork, last MIDI note,
                             GitHub link)
 Resources/Fonts/            Jost Light/Regular/Bold (static instances of NAMsayin's variable Jost, OFL),
@@ -62,7 +64,7 @@ Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
   UiSnapshot.cpp            KaiaUiSnapshot: renders the real editor to PNG (docs/editor.png; also
-                            library.png/settings.png when given a library folder;
+                            library.png/library-tiles.png/settings.png when given a library folder;
                             KAIA_SNAPSHOT_PAD_THEMES=1 adds one shot of the pads per colour theme)
 tools/
   make_fonts.py             makes Resources/Fonts/ from Jost[wght].ttf (needs fontTools)
@@ -151,9 +153,10 @@ E-drum modules (`TriggerMap.cpp`): zone layout A01 kick, A02 snare, A03 HH close
 A05 snare rim, A06 cross-stick, A07 crash 1, A08 HH open, A09 tom 4 (floor) .. A12 tom 1 (high), A13
 ride, A14 ride bell, A15 crash 2 edge, A16 crash 2; tom rims and the ride edge play the head/bow pad.
 The open hi-hat notes also play A04 (owner's request: both pads at once). This layout and the
-TD-10 notes come from the owner's own TD-10: toms reversed (low tom on A09), 22/26 hi-hat edges, 51
--> A13, 53 -> A14, 57 -> A16, 52 -> A15, 55 -> A07, 10 -> A15 (TD-10 only); 49 was put with 55 on A07
-and 59 with 51 on A13 by inference. Note tables are factory defaults: Roland classic (TD-3..TD-10)
+TD-10 notes come from the owner's own TD-10: toms reversed (low tom on A09), 22/26 hi-hat edges,
+52 and 10 -> A15. The TD-10 table is the owner's own choice: 49 -> A13 (with 59), 55 -> A16, and
+51, 53, 57 unmapped ("too much"); the other Roland classic modules keep 49/55 -> A07, 51/59 -> A13,
+53 -> A14, 57 -> A16. Note tables are factory defaults: Roland classic (TD-3..TD-10)
 36/38/40, toms 48/50 45/47 43/58 41/39, HH 42+22 / 46+26 / 44, crash 1 49/55, crash 2 57 + edge 52,
 ride 51/59, bell 53; modern Roland and Alesis add 37 cross-stick; Yamaha DTX toms 48/47/43 (DTX402
 reference), 37 closed rim, 83 foot splash; GM for the rest. Partly checked against the published
@@ -252,6 +255,14 @@ Product "Kaia", manufacturer code `Kaia`, plugin code `Kai1`, VST3/AU bundle id
 * Drum-module maps: only the TD-10 has been tried with real hardware (by the owner).
 * Library: one root folder; program pads are parsed on the message thread when expanded.
 * Touch: Linux delivers touch as mouse events, so lists use `ScrollOnDragMode::all`; the library
-  only starts a drag-and-drop when the drag starts sideways (`Item::dragIsVertical`) and plays
-  auditions on mouse-up. The library hides the TreeView's scroll bars so wheel events reach
-  `LibraryBrowser::mouseWheelMove` (animated), with its own ScrollBar.
+  (list and tiles) scrolls with `KineticScroller` instead: drag, fling with friction (shared setting
+  `flingStrength` 0..1, Settings slider 0-10), wheel glide, all applied once per frame from a
+  `VBlankAttachment` (on Linux the peer repaints right after the VBlank callbacks, so there is no
+  beating between an animation timer and the repaint timer). It only starts a drag-and-drop when
+  the drag starts sideways (`Item::dragIsVertical`, and never while the press scrolls) and plays
+  auditions on mouse-up unless the press scrolled or stopped a fling. The TreeView's scroll bars
+  are hidden (its viewport passes the wheel on), with our own ScrollBar.
+* Library tiles: covers are read on a 2-thread pool only for tiles on screen (jobs skip themselves
+  when scrolled past), kept downscaled (<= 512 px, at most 160 covers) and each tile is drawn once
+  into an image at the screen scale. View mode and columns: settings `libraryView`, `libraryColumns`.
+  `KaiaUiSnapshot` writes library-tiles.png; `KAIA_SNAPSHOT_BENCH=1` prints the list's paint time.

@@ -123,6 +123,89 @@ namespace
 }
 
 //==============================================================================
+bool KitLoader::readPackArtwork (const juce::File& target, juce::MemoryBlock& image)
+{
+    // Expansion.xml names the cover; without one, an image file at the top of the pack
+    // ("cover", "artwork" or "folder" preferred) is used.
+    auto isImageName = [] (const juce::String& name)
+    {
+        auto ext = extensionOf (name);
+        return ext == "jpg" || ext == "jpeg" || ext == "png";
+    };
+    auto preference = [] (const juce::String& base)
+    {
+        for (auto* word : { "cover", "artwork", "folder", "front" })
+            if (base.containsIgnoreCase (word))
+                return 2;
+        return 1;
+    };
+
+    image.reset();
+    if (target.existsAsFile() && extensionOf (target.getFileName()) == "xpn")
+    {
+        auto zip = ZipReader::open (target);
+        if (! zip->isValid())
+            return false;
+
+        auto& entries = zip->getEntries();
+        int best = -1, bestScore = 0;
+        for (int i = 0; i < (int) entries.size(); ++i)
+        {
+            auto& e = entries[(size_t) i];
+            if (e.isDirectory() || e.encrypted || isJunkEntry (e.name))
+                continue;
+            auto base = e.name.fromLastOccurrenceOf ("/", false, false);
+            if (base.equalsIgnoreCase ("Expansion.xml"))
+            {
+                juce::MemoryBlock mb;
+                juce::String err;
+                auto name = zip->readEntry (i, mb, err) ? imageNameFromExpansionXml (bytesToText (mb)) : juce::String();
+                auto idx = name.isNotEmpty() ? zip->indexOf (name) : -1;
+                for (int j = 0; idx < 0 && name.isNotEmpty() && j < (int) entries.size(); ++j)
+                    if (entries[(size_t) j].name.fromLastOccurrenceOf ("/", false, false).equalsIgnoreCase (name))
+                        idx = j;
+                if (idx >= 0)
+                {
+                    best = idx;
+                    bestScore = 100;
+                }
+            }
+            else if (isImageName (base) && ! e.name.containsChar ('/') && preference (base) > bestScore)
+            {
+                best = i;
+                bestScore = preference (base);
+            }
+        }
+        juce::String err;
+        return best >= 0 && zip->readEntry (best, image, err) && image.getSize() > 0;
+    }
+
+    if (! target.isDirectory())
+        return false;
+
+    auto expansionXml = target.getChildFile ("Expansion.xml");
+    if (expansionXml.existsAsFile())
+    {
+        auto name = imageNameFromExpansionXml (expansionXml.loadFileAsString());
+        if (name.isNotEmpty() && target.getChildFile (name).loadFileAsData (image) && image.getSize() > 0)
+            return true;
+    }
+
+    juce::File best;
+    int bestScore = 0;
+    for (const auto& entry : juce::RangedDirectoryIterator (target, false, "*", juce::File::findFiles | juce::File::ignoreHiddenFiles))
+    {
+        auto f = entry.getFile();
+        if (isImageName (f.getFileName()) && preference (f.getFileName()) > bestScore)
+        {
+            best = f;
+            bestScore = preference (f.getFileName());
+        }
+    }
+    image.reset();
+    return best != juce::File() && best.loadFileAsData (image) && image.getSize() > 0;
+}
+
 juce::String KitLoader::fileFilter()
 {
     return "*.xpm;*.xpn;*.pgm;*.XPM;*.XPN;*.PGM;*.kaiapreset;*.wav;*.WAV;*.aif;*.aiff;*.flac;*.snd;*.SND";
