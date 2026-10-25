@@ -145,7 +145,7 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   sample or pad sideways onto the pads to use it. Library items play when you lift your finger,
   so scrolling stays silent. The *Play* button under the waveform plays the selected pad.
 * **Header**: the open expansion's artwork (click it for its program list), the last MIDI note
-  received with its velocity (it flashes on every hit), and a link to this GitHub page.
+  received with its velocity (it flashes on every hit); click the Kaia logo to open this GitHub page.
 * **Saving**: the DAW project stores the kit and every pad edit. Samples are referenced from their
   original location, not copied into the project; if you move your library, use **Relink…** and
   point it at the new folder.

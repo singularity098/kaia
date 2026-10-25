@@ -63,10 +63,9 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     coverButton.onClick = [this] { togglePanel (Panel::Programs); };
     addChildComponent (coverButton);
 
-    githubLink.setFont (uiFont (12.0f), false, juce::Justification::centredRight);
-    githubLink.setColour (juce::HyperlinkButton::textColourId, Colours::textDim);
-    githubLink.setTooltip ("Kaia on GitHub: github.com/singularity098/kaia");
-    addAndMakeVisible (githubLink);
+    logoLink.setTooltip ("Kaia on GitHub: github.com/singularity098/kaia");
+    logoLink.setWantsKeyboardFocus (false);
+    addAndMakeVisible (logoLink);
 
     masterSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     masterSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -335,6 +334,7 @@ void KaiaEditor::resized()
     footerArea = r.removeFromBottom (32);
 
     auto h = headerArea.reduced (12, 10);
+    logoLink.setBounds (headerArea.withWidth (kLogoWidth).reduced (12, 10));
     h.removeFromLeft (kLogoWidth - 20);
     auto nav = [&h] (juce::Component& c, int w) { c.setBounds (h.removeFromLeft (w).withSizeKeepingCentre (w, 38)); };
     nav (openButton, 76);
@@ -349,8 +349,6 @@ void KaiaEditor::resized()
     h.removeFromLeft (14);
 
     auto narrow = h.getWidth() < 520;     // near the minimum editor width
-    githubLink.setBounds (h.removeFromRight (48).withTrimmedBottom (h.getHeight() / 2));
-    h.removeFromRight (8);
     masterSlider.setBounds (h.removeFromRight (52).withTrimmedBottom (10).expanded (0, 6));
     h.removeFromRight (8);
     panicButton.setBounds (h.removeFromRight (58).reduced (0, 4));

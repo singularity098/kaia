@@ -54,8 +54,8 @@ Source/
                             pad colour themes), PadGrid (MPC layout, pad 1 bottom-left, library
                             drop target), PadEditor, ProgramBrowser, LibraryBrowser (TreeView,
                             audition, drag to pads, own smooth wheel scrolling), SettingsPanel
-                            (drum map editor), PluginEditor (header: pack artwork, last MIDI note,
-                            GitHub link)
+                            (drum map editor), PluginEditor (header: pack artwork, last MIDI note;
+                            the logo is a transparent link to GitHub)
 Resources/Fonts/            Jost Light/Regular/Bold (static instances of NAMsayin's variable Jost, OFL),
                             embedded as binary data (KaiaFonts)
 Resources/Logo/             the logo (made by tools/make_logo.py): a K built from pads (stem in the
