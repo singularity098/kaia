@@ -1,4 +1,9 @@
-# Kaia
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="Resources/Logo/kaia-logo-light.svg">
+    <img src="Resources/Logo/kaia-logo-dark.svg" alt="Kaia" height="72">
+  </picture>
+</h1>
 
 **Kaia is a fast, lightweight drum sampler that plays Akai MPC programs and expansions directly —
 no Kontakt, no MPC software.** It is built for Linux first (VST3, LV2, CLAP and a standalone app),
@@ -233,7 +238,8 @@ checklist.
 
 Kaia is free software under the GNU Affero General Public License v3 (see `LICENSE`). It uses
 JUCE (AGPLv3), the VST3 SDK (GPLv3 option), the LV2 headers (ISC) and CLAP with
-clap-juce-extensions (MIT), and the Jost font (SIL Open Font License). See [THIRD_PARTY.md](THIRD_PARTY.md).
+clap-juce-extensions (MIT), and the Jost font (SIL Open Font License). The logo's wordmark is drawn from the Michroma font
+(SIL Open Font License). See [THIRD_PARTY.md](THIRD_PARTY.md).
 
 MPC is a trademark of inMusic Brands. Kaia is an independent project, not affiliated with or
 endorsed by Akai Professional or inMusic.

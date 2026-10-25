@@ -10,6 +10,7 @@
 | [CLAP](https://github.com/free-audio/clap) and [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) | MIT | CLAP wrapper |
 | zlib, FLAC, libvorbis, libpng (bundled with JUCE) | zlib / BSD-style | decoding |
 | [Jost](https://github.com/indestructible-type/Jost) by indestructible type* | SIL Open Font License 1.1 (text below) | the UI font, embedded |
+| [Michroma](https://github.com/googlefonts/Michroma-font) by Vernon Adams | SIL Open Font License 1.1 | the logo wordmark, as outlines (`Resources/Logo/`, `tools/make_logo.py`); the font itself is not distributed |
 
 "VST" is a trademark of Steinberg Media Technologies GmbH.
 

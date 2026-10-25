@@ -58,6 +58,12 @@ Source/
                             GitHub link)
 Resources/Fonts/            Jost Light/Regular/Bold (static instances of NAMsayin's variable Jost, OFL),
                             embedded as binary data (KaiaFonts)
+Resources/Logo/             the logo (made by tools/make_logo.py): a K built from pads (stem in the
+                            text colour, arms lit in the accent) + "KAIA" in Michroma as outlines.
+                            kaia-logo-dark/light (README), kaia-icon, kaia-app-icon(-N.png: plugin
+                            ICON_BIG/ICON_SMALL, installer's hicolor icons), kaia-wordmark.svg
+                            (embedded as KaiaLogo; the header draws the pad K in code so it follows
+                            the accent). alt/ keeps the runner-up "pad one" logo (4x4 grid, pad 1 lit)
 Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
@@ -66,6 +72,8 @@ Tests/
                             KAIA_SNAPSHOT_PAD_THEMES=1 adds one shot of the pads per colour theme)
 tools/
   make_fonts.py             makes Resources/Fonts/ from Jost[wght].ttf (needs fontTools)
+  make_logo.py              makes the Resources/Logo/ SVGs from Michroma-Regular.ttf (needs fontTools);
+                            re-render the PNGs from the SVGs with a browser afterwards
   make_demo_pack.py         generates "Kaia Demo Kit.xpn" (synthesized drums, safe to redistribute)
   sandbox-sysroot.sh        header-only sysroot for build machines without the distro -dev packages
   xatoms.c                  pre-registers X11 atoms so JUCE windows work on a bare Xvfb
@@ -231,8 +239,9 @@ Plugin binaries (Linux, headless):
    hidden shim to `cmake/glibc_compat.c` rather than raising the baseline.
 3. Package `Kaia-linux-x86_64/`: `VST3/ LV2/ CLAP/ Standalone/` (strip the binaries with
    `strip --strip-unneeded`), `install.sh`, `README.md`, `LICENSE`, `THIRD_PARTY.md`,
-   `docs/editor.png`, and `Kaia Demo Kit.xpn` from `tools/make_demo_pack.py`. The CI Linux job
-   produces the same archive as an artifact.
+   `docs/editor.png`, `Resources/Logo/kaia-logo-*.svg` (README header), `icons/`
+   (`Resources/Logo/kaia-app-icon-*.png`, used by install.sh), and `Kaia Demo Kit.xpn` from
+   `tools/make_demo_pack.py`. The CI Linux job produces the same archive as an artifact.
 4. Re-run pluginval, clap-validator and the host test on the stripped, installed binaries.
 
 ## Plugin identity (don't change casually: hosts key saved projects on these)

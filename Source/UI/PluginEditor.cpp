@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 
+#include <KaiaLogo.h>
+
 namespace kaia
 {
 
@@ -14,6 +16,13 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
       settingsPanel (p)
 {
     setLookAndFeel (&lookAndFeel);
+
+    if (auto svg = juce::XmlDocument::parse (juce::String::fromUTF8 (KaiaLogoData::kaiawordmark_svg, KaiaLogoData::kaiawordmark_svgSize)))
+    {
+        wordmark = juce::Drawable::createFromSVG (*svg);
+        if (wordmark != nullptr)
+            wordmark->replaceColour (juce::Colours::white, Colours::text);
+    }
 
     openButton.setTooltip ("Open an MPC program (.xpm, .pgm), an expansion (.xpn), a folder, or audio files");
     openButton.onClick = [this] { showOpenMenu(); };
@@ -240,22 +249,34 @@ void KaiaEditor::paint (juce::Graphics& g)
     g.drawHorizontalLine (headerArea.getBottom(), 0.0f, (float) getWidth());
     g.drawHorizontalLine (footerArea.getY(), 0.0f, (float) getWidth());
 
-    // Logo: a small 2x2 pad block and the name
-    auto logo = headerArea.withWidth (kLogoWidth).reduced (16, 0);
+    // Logo: a K made of pads (the arms lit in the accent colour) and the wordmark
+    // (Resources/Logo, tools/make_logo.py: a 4x5 grid of 24-unit pads on a 28-unit pitch, 136 units tall)
     {
-        auto icon = logo.removeFromLeft (30).withSizeKeepingCentre (30, 30).toFloat();
-        auto cell = icon.getWidth() / 2.0f;
-        for (int i = 0; i < 4; ++i)
+        auto logo = headerArea.withWidth (kLogoWidth).reduced (16, 0).toFloat();
+        const float height = 40.0f, unit = height / 136.0f;
+        auto icon = logo.removeFromLeft (108.0f * unit).withSizeKeepingCentre (108.0f * unit, height);
+        static const char* const padK[] = { "X..X", "X.X.", "XX..", "X.X.", "X..X" };
+        for (int row = 0; row < 5; ++row)
         {
-            auto r = juce::Rectangle<float> (icon.getX() + (float) (i % 2) * cell, icon.getY() + (float) (i / 2) * cell, cell, cell).reduced (2.0f);
-            g.setColour (i == 1 ? Colours::text : Colours::accent);
-            g.fillRoundedRectangle (r, 3.0f);
+            for (int col = 0; col < 4; ++col)
+            {
+                auto on = padK[row][col] == 'X';
+                g.setColour (! on ? Colours::panelRaised : col == 0 ? Colours::text : Colours::accent);
+                g.fillRoundedRectangle (icon.getX() + (float) col * 28.0f * unit, icon.getY() + (float) row * 28.0f * unit,
+                                        24.0f * unit, 24.0f * unit, 5.0f * unit);
+            }
         }
-        logo.removeFromLeft (12);
+
+        if (wordmark != nullptr)
+        {
+            logo.removeFromLeft (40.0f * unit);
+            auto capHeight = 56.0f * unit;      // a little larger than in the SVG logo: thin strokes at this size
+            auto bounds = wordmark->getDrawableBounds();
+            wordmark->drawWithin (g, logo.withSizeKeepingCentre (logo.getWidth(), capHeight)
+                                         .withWidth (bounds.getWidth() * capHeight / bounds.getHeight()),
+                                  juce::RectanglePlacement::xLeft | juce::RectanglePlacement::yMid, 1.0f);
+        }
     }
-    g.setFont (uiFont (27.0f, true));
-    g.setColour (Colours::text);
-    g.drawText ("Kaia", logo, juce::Justification::centredLeft);
 
     if (wasLoading)
     {

@@ -38,6 +38,9 @@ jobs:
           strip $pkg/Standalone/Kaia
           cp packaging/install.sh README.md LICENSE THIRD_PARTY.md $pkg/
           cp docs/editor.png $pkg/docs/
+          mkdir -p $pkg/icons $pkg/Resources/Logo
+          cp Resources/Logo/kaia-app-icon-*.png $pkg/icons/
+          cp Resources/Logo/kaia-logo-*.svg $pkg/Resources/Logo/
           python3 tools/make_demo_pack.py "$pkg/Kaia Demo Kit.xpn"
           tar czf $pkg.tar.gz $pkg
 

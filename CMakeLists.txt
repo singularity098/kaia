@@ -88,6 +88,13 @@ if(KAIA_BUILD_PLUGIN OR KAIA_BUILD_HOST_TEST)
             Resources/Fonts/Jost-Light.ttf
             Resources/Fonts/Jost-Regular.ttf
             Resources/Fonts/Jost-Bold.ttf)
+
+    # The wordmark of the header logo (tools/make_logo.py; the pad K is drawn in code)
+    juce_add_binary_data(KaiaLogo
+        HEADER_NAME KaiaLogo.h
+        NAMESPACE KaiaLogoData
+        SOURCES
+            Resources/Logo/kaia-wordmark.svg)
 endif()
 
 set(KAIA_COMMON_DEFS
@@ -130,7 +137,9 @@ juce_add_plugin(Kaia
     COPY_PLUGIN_AFTER_BUILD     FALSE
     VST3_CATEGORIES             Instrument Sampler Drum
     LV2URI                      "https://github.com/singularity098/kaia"
-    LV2_SHARED_LIBRARY_NAME     Kaia)
+    LV2_SHARED_LIBRARY_NAME     Kaia
+    ICON_BIG                    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Logo/kaia-app-icon-512.png"
+    ICON_SMALL                  "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Logo/kaia-app-icon-64.png")
 
 target_sources(Kaia PRIVATE ${KAIA_CORE_SOURCES} ${KAIA_PLUGIN_SOURCES})
 target_include_directories(Kaia PRIVATE Source)
@@ -139,6 +148,7 @@ target_compile_definitions(Kaia PUBLIC ${KAIA_COMMON_DEFS} JUCE_MODAL_LOOPS_PERM
 target_link_libraries(Kaia
     PRIVATE
         KaiaFonts
+        KaiaLogo
         juce::juce_audio_utils
         juce::juce_audio_formats
         juce::juce_dsp
@@ -201,6 +211,6 @@ if(KAIA_BUILD_HOST_TEST)
     target_include_directories(KaiaUiSnapshot PRIVATE Source)
     target_compile_definitions(KaiaUiSnapshot PRIVATE ${KAIA_COMMON_DEFS} JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(KaiaUiSnapshot
-        PRIVATE KaiaFonts juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
+        PRIVATE KaiaFonts KaiaLogo juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         PUBLIC juce::juce_recommended_config_flags)
 endif()

@@ -52,6 +52,7 @@ private:
     KaiaProcessor& processor;
     KaiaLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this, 600 };
+    std::unique_ptr<juce::Drawable> wordmark;      // "KAIA" in the header logo
 
     juce::TextButton openButton { "Open" }, browseButton { "Programs" }, prevButton { "<" }, nextButton { ">" };
     juce::TextButton panicButton { "Stop" }, relinkButton { "Relink..." }, routingButton { "Outputs" };

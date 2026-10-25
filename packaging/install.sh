@@ -21,14 +21,15 @@ done
 
 if [ "$system" = 1 ]; then
     vst3="/usr/local/lib/vst3"; lv2="/usr/local/lib/lv2"; clap="/usr/lib/clap"   # CLAP does not search /usr/local
-    bin="/usr/local/bin"; apps="/usr/local/share/applications"
+    bin="/usr/local/bin"; apps="/usr/local/share/applications"; icons="/usr/local/share/icons/hicolor"
 else
     vst3="$HOME/.vst3"; lv2="$HOME/.lv2"; clap="$HOME/.clap"
-    bin="$HOME/.local/bin"; apps="$HOME/.local/share/applications"
+    bin="$HOME/.local/bin"; apps="$HOME/.local/share/applications"; icons="$HOME/.local/share/icons/hicolor"
 fi
 
 if [ "$uninstall" = 1 ]; then
     rm -rf "$vst3/Kaia.vst3" "$lv2/Kaia.lv2" "$clap/Kaia.clap" "$bin/Kaia" "$apps/kaia.desktop"
+    rm -f "$icons"/*/apps/kaia.png
     echo "Kaia removed."
     exit 0
 fi
@@ -42,12 +43,23 @@ cp "$here/CLAP/Kaia.clap" "$clap/"
 cp "$here/Standalone/Kaia" "$bin/Kaia"
 chmod +x "$bin/Kaia"
 
+# App icon: next to this script in the release archive, in Resources/Logo/ in the source tree
+logo="$here/icons"
+[ -d "$logo" ] || logo="$(cd "$(dirname "$0")" && pwd)/../Resources/Logo"
+for size in 32 64 128 256 512; do
+    icon="$logo/kaia-app-icon-$size.png"
+    [ -f "$icon" ] || continue
+    mkdir -p "$icons/${size}x${size}/apps"
+    cp "$icon" "$icons/${size}x${size}/apps/kaia.png"
+done
+
 cat > "$apps/kaia.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Kaia
 Comment=Drum sampler for MPC programs and expansions
 Exec=$bin/Kaia
+Icon=kaia
 Terminal=false
 Categories=AudioVideo;Audio;Music;
 EOF
