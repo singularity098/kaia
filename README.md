@@ -5,9 +5,7 @@
   </picture>
 </h1>
 
-**Kaia is a fast, lightweight drum sampler that plays Akai MPC programs and expansions directly —
-no Kontakt, no MPC software.** It is built for Linux first (VST3, LV2, CLAP and a standalone app),
-with Windows and macOS builds produced by CI.
+**Kaia is a fast, lightweight drum sampler that plays Akai MPC programs and expansions directly.** It is built for Linux first (VST3, LV2, CLAP and a standalone app), with Windows and macOS builds produced by CI.
 
 ![Kaia](docs/editor.png)
 
