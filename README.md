@@ -87,10 +87,11 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   always expose all 17 outputs. If an aux output is switched off in the host, its pads play through
   Main, so nothing goes silent.
 * **Library** (header): set your library folder once (*Folder…* or *Settings*), and Kaia scans it
-  in the background: every `.xpn`, every folder with programs, and every folder of samples. Expand
-  an expansion to see its programs (expand a program to see its pads) and its samples. With
-  *Click to hear* on, selecting a sample or pad plays it. **Double-click** a program to load it;
-  double-click a sample or pad to put it on the selected pad, or **drag** it onto any pad
+  in the background: every `.xpn`, every folder with programs, and every folder of samples. Click
+  a heading, an expansion or its *Programs* / *Samples* to open or close it (the triangle next to a
+  program shows its pads). **Click a program** (or preset) to load it. With *Click to hear* on,
+  clicking a sample or pad plays it, again on every click. Double-click a sample or pad to put it
+  on the selected pad (named at the bottom of the list), or **drag** it onto any pad
   (hold Shift while dropping a sample to add it as a layer). This is how you mix and match
   sounds from different expansions. The search box searches programs and samples of the whole
   library. The scan is cached in the config folder, so it's instant next time.

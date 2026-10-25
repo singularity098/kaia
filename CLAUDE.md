@@ -252,6 +252,7 @@ Product "Kaia", manufacturer code `Kaia`, plugin code `Kai1`, VST3/AU bundle id
 * Drum-module maps: only the TD-10 has been tried with real hardware (by the owner).
 * Library: one root folder; program pads are parsed on the message thread when expanded.
 * Touch: Linux delivers touch as mouse events, so lists use `ScrollOnDragMode::all`; the library
-  only starts a drag-and-drop when the drag starts sideways (`Item::dragIsVertical`) and plays
-  auditions on mouse-up. The library hides the TreeView's scroll bars so wheel events reach
+  only starts a drag-and-drop when the drag starts sideways (`Item::dragIsVertical`) and acts on
+  single clicks on mouse-up (`pendingClick` -> `Item::clicked()`: open/close containers and
+  headings, load programs/presets, play samples/pads); double-click = `activate()` (put on pad). The library hides the TreeView's scroll bars so wheel events reach
   `LibraryBrowser::mouseWheelMove` (animated), with its own ScrollBar.

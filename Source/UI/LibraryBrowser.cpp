@@ -46,8 +46,12 @@ public:
 
     void itemClicked (const juce::MouseEvent& e) override
     {
+        // Clicks and touches act on release (LibraryBrowser::mouseUp), so dragging the list to
+        // scroll does nothing
         if (e.mods.isPopupMenu())
             showMenu();
+        else
+            browser.pendingClick = getItemIdentifierString();
     }
 
     void itemDoubleClicked (const juce::MouseEvent&) override { activate(); }
@@ -57,19 +61,22 @@ public:
     virtual bool isHeading() const           { return false; }
     virtual bool isBold() const              { return false; }
     virtual bool isDisabled() const          { return false; }
-    virtual void activate()                  { setOpen (! isOpen()); }
+    virtual void clicked()                   { if (mightContainSubItems()) setOpen (! isOpen()); }   // single click
+    virtual void activate()                  {}                                                         // double click
     virtual void audition()                  {}
     virtual void showMenu()                  {}
 
+    void playIfWanted()
+    {
+        if (browser.autoPreview.getToggleState())
+            audition();
+    }
+
     void itemSelectionChanged (bool nowSelected) override
     {
-        if (! nowSelected || ! browser.autoPreview.getToggleState())
-            return;
-        // Clicks and touches play on release, so dragging the list to scroll stays silent
-        if (juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown())
-            browser.pendingAudition = getItemIdentifierString();
-        else
-            audition();
+        // Keyboard navigation plays what it lands on (mouse clicks are handled in clicked())
+        if (nowSelected && ! juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown())
+            playIfWanted();
     }
 
     // Touch screens on Linux send mouse events, so the list scrolls on any drag: only a drag
@@ -114,6 +121,7 @@ public:
         return juce::var (o);
     }
 
+    void clicked() override  { playIfWanted(); }
     void audition() override { browser.processor.previewSample (ref()); }
     void activate() override { browser.processor.assignSamplesToPad (browser.processor.selectedPad, std::vector<SampleRef> { ref() }); }
 
@@ -181,6 +189,7 @@ public:
         return juce::var (o);
     }
 
+    void clicked() override  { playIfWanted(); }
     void audition() override { browser.processor.previewPad (pad()); }
     void activate() override { browser.processor.importPad (browser.processor.selectedPad, pad()); }
 
@@ -229,7 +238,9 @@ public:
                 addSubItem (new PadItem (browser, location(), kit, i));
     }
 
+    void clicked() override   { activate(); }
     void activate() override  { browser.processor.openPack (pack().file, location()); }
+    void itemDoubleClicked (const juce::MouseEvent&) override {}     // the first click loaded it
 
     void showMenu() override
     {
@@ -388,7 +399,9 @@ public:
     juce::String getText() const override       { return info.name; }
     bool mightContainSubItems() override        { return false; }
     juce::String getUniqueName() const override { return "r:" + info.file.getFullPathName(); }
+    void clicked() override                     { activate(); }
     void activate() override                    { browser.processor.loadPreset (info.file); }
+    void itemDoubleClicked (const juce::MouseEvent&) override {}  // the first click loaded it
 
     void showMenu() override
     {
@@ -427,27 +440,44 @@ public:
     juce::String getUniqueName() const override { return "root"; }
 };
 
-namespace
+//==============================================================================
+// Heading that groups a flat list (presets, library, search results). Headings open by themselves
+// unless the user closed them; a click opens or closes one on release, like the other items
+// (see LibraryBrowser::mouseUp).
+class LibraryBrowser::HeadingItem : public juce::TreeViewItem
 {
-    // Heading that groups a flat list (presets, search results)
-    class Heading : public juce::TreeViewItem
+public:
+    HeadingItem (LibraryBrowser& b, juce::String t) : browser (b), text (std::move (t)) {}
+
+    bool mightContainSubItems() override        { return true; }
+    bool canBeSelected() const override         { return false; }
+    int getItemHeight() const override          { return 26; }
+    juce::String getUniqueName() const override { return "h:" + text; }
+
+    void itemClicked (const juce::MouseEvent& e) override
     {
-    public:
-        explicit Heading (juce::String t) : text (std::move (t)) {}
-        bool mightContainSubItems() override        { return true; }
-        bool canBeSelected() const override         { return false; }
-        int getItemHeight() const override          { return 26; }
-        juce::String getUniqueName() const override { return "h:" + text; }
-        void paintItem (juce::Graphics& g, int width, int height) override
-        {
-            g.setColour (Colours::textDim);
-            g.setFont (uiFont (11.5f, true));
-            g.drawText (text.toUpperCase(), 4, 0, width - 8, height, juce::Justification::centredLeft);
-        }
-    private:
-        juce::String text;
-    };
-}
+        if (! e.mods.isPopupMenu())
+            browser.pendingClick = getItemIdentifierString();
+    }
+
+    void itemOpennessChanged (bool isNowOpen) override
+    {
+        if (isNowOpen)
+            browser.closedHeadings.erase (text);
+        else
+            browser.closedHeadings.insert (text);
+    }
+
+    void paintItem (juce::Graphics& g, int width, int height) override
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (uiFont (11.5f, true));
+        g.drawText (text.toUpperCase(), 4, 0, width - 8, height, juce::Justification::centredLeft);
+    }
+
+    LibraryBrowser& browser;
+    const juce::String text;
+};
 
 //==============================================================================
 LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
@@ -558,14 +588,14 @@ void LibraryBrowser::rebuildTree()
     {
         if (! presets.empty())
         {
-            auto* h = new Heading ("My presets");
+            auto* h = new HeadingItem (*this, "My presets");
             for (auto& pr : presets)
                 h->addSubItem (new PresetItem (*this, pr));
             root->addSubItem (h);
         }
         if (index != nullptr && ! index->packs.empty())
         {
-            auto* h = new Heading ("Library");
+            auto* h = new HeadingItem (*this, "Library");
             for (int i = 0; i < (int) index->packs.size(); ++i)
                 h->addSubItem (new PackItem (*this, index, i));
             root->addSubItem (h);
@@ -585,13 +615,13 @@ void LibraryBrowser::rebuildTree()
         };
 
         constexpr int kMaxResults = 400;
-        auto* presetHeading = new Heading ("Presets");
+        auto* presetHeading = new HeadingItem (*this, "Presets");
         for (auto& pr : presets)
             if (matches (pr.name, {}))
                 presetHeading->addSubItem (new PresetItem (*this, pr));
 
-        auto* programHeading = new Heading ("Programs");
-        auto* sampleHeading = new Heading ("Samples");
+        auto* programHeading = new HeadingItem (*this, "Programs");
+        auto* sampleHeading = new HeadingItem (*this, "Samples");
         if (index != nullptr)
         {
             for (int pi = 0; pi < (int) index->packs.size(); ++pi)
@@ -622,16 +652,24 @@ void LibraryBrowser::rebuildTree()
     if (openness != nullptr && filter.isEmpty())
         tree.restoreOpennessState (*openness, true);
     for (int i = 0; i < root->getNumSubItems(); ++i)
-        root->getSubItem (i)->setOpen (true);     // headings are always open
+        if (auto* h = dynamic_cast<HeadingItem*> (root->getSubItem (i)))
+            h->setOpen (closedHeadings.count (h->text) == 0);
 
-    // What to tell the user
+    updateHint();
+}
+
+void LibraryBrowser::updateHint()
+{
+    hintPad = processor.selectedPad;
+    auto filter = search.getText().trim();
     juce::String text;
     if (library->getRoot() == juce::File())
         text = "Choose your library folder (Folder...) to browse all your expansions and samples here.";
-    else if (filter.isNotEmpty() && root->getNumSubItems() == 0)
+    else if (filter.isNotEmpty() && root != nullptr && root->getNumSubItems() == 0)
         text = "Nothing matches \"" + filter + "\".";
     else
-        text = "Click to hear. Double-click (or drag onto a pad) to use it on pad " + targetPadName() + ".";
+        text = "Click a sample to hear it, a program to load it. Double-click a sample (or drag it onto a pad) to put it on pad "
+               + targetPadName() + ".";
     hint.setText (text, juce::dontSendNotification);
 }
 
@@ -788,16 +826,25 @@ void LibraryBrowser::mouseDrag (const juce::MouseEvent&)
 
 void LibraryBrowser::mouseUp (const juce::MouseEvent& e)
 {
-    auto pending = std::exchange (pendingAudition, juce::String());
-    if (pending.isNotEmpty() && ! e.mouseWasDraggedSinceMouseDown())
-        if (auto* item = dynamic_cast<Item*> (tree.findItemFromIdentifierString (pending)))
-            item->audition();
+    // Single clicks act on release; the second click of a double-click is left to itemDoubleClicked
+    auto pending = std::exchange (pendingClick, juce::String());
+    if (pending.isEmpty() || e.mouseWasDraggedSinceMouseDown() || e.getNumberOfClicks() > 1)
+        return;
+    if (auto* treeItem = tree.findItemFromIdentifierString (pending))
+    {
+        if (auto* item = dynamic_cast<Item*> (treeItem))
+            item->clicked();
+        else
+            treeItem->setOpen (! treeItem->isOpen());     // HeadingItem
+    }
 }
 
 void LibraryBrowser::timerCallback()
 {
     // Keeps the scroll bar in step with drag-scrolling momentum, opening folders and so on
     syncScrollBar();
+    if (processor.selectedPad != hintPad)
+        updateHint();      // a pad was picked on the pad grid
 }
 
 void LibraryBrowser::paint (juce::Graphics& g)

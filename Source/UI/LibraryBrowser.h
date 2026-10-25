@@ -7,7 +7,8 @@ namespace kaia
 {
 
 // Browses the library folder: presets, expansions and folders, their programs (and the pads of
-// each program) and their samples. Click to audition, double-click to use, drag onto a pad.
+// each program) and their samples. Click to open, audition or load, double-click to use, drag
+// onto a pad.
 // Nothing here writes to the library.
 class LibraryBrowser : public juce::Component,
                        private juce::ChangeListener,
@@ -36,6 +37,7 @@ public:
 private:
     class Item;
     class RootItem;
+    class HeadingItem;
     class PackItem;
     class GroupItem;
     class ProgramItem;
@@ -49,6 +51,7 @@ private:
     void animateScroll();
     void syncScrollBar();
     void rebuildTree();
+    void updateHint();
     std::shared_ptr<const Kit> programKit (const ProgramLocation& location);   // parsed lazily, cached
     juce::String targetPadName() const;
 
@@ -68,7 +71,9 @@ private:
     double scrollTarget = 0.0, scrollPosition = 0.0;
     bool scrollAnimating = false;
     juce::Time lastWheelTime;
-    juce::String pendingAudition;          // item to play when the click is released
+    juce::String pendingClick;             // item clicked, acted on when the click is released
+    int hintPad = -1;                      // pad named in the hint
+    std::set<juce::String> closedHeadings; // headings the user closed (kept across rebuilds)
 
     struct Fonts
     {
