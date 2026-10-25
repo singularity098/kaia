@@ -60,7 +60,7 @@ private:
     juce::Label kitLabel, formatLabel, statusLabel, voicesLabel;
     juce::ImageButton coverButton;                 // the open expansion's artwork
     juce::String shownCoverKey;
-    juce::HyperlinkButton githubLink { "GitHub", juce::URL ("https://github.com/singularity098/kaia") };
+    juce::HyperlinkButton logoLink { {}, juce::URL ("https://github.com/singularity098/kaia") };   // over the painted logo
     juce::Slider masterSlider;
     juce::AudioProcessorValueTreeState::SliderAttachment masterAttachment;
 
