@@ -13,6 +13,7 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
       padEditor (p),
       browser (p),
       library (p),
+      files (p),
       settingsPanel (p)
 {
     setLookAndFeel (&lookAndFeel);
@@ -28,6 +29,8 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     openButton.onClick = [this] { showOpenMenu(); };
     browseButton.setTooltip ("Show the programs of the open expansion or folder");
     browseButton.onClick = [this] { togglePanel (Panel::Programs); };
+    filesButton.setTooltip ("Explore a folder on disk as it is: hear samples, drag them onto pads, load programs");
+    filesButton.onClick = [this] { togglePanel (Panel::Files); };
     libraryButton.setTooltip ("Browse your whole library: presets, expansions, programs, pads and samples");
     libraryButton.onClick = [this] { togglePanel (Panel::Library); };
     settingsButton.setTooltip ("Drum module, library folder, highlight colour");
@@ -43,7 +46,7 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     routingButton.setTooltip ("Route pads to the plugin's aux outputs for multi-track mixing");
     routingButton.onClick = [this] { showRoutingMenu(); };
 
-    for (auto* b : { &openButton, &browseButton, &libraryButton, &prevButton, &nextButton, &panicButton, &relinkButton, &routingButton, &settingsButton })
+    for (auto* b : { &openButton, &filesButton, &libraryButton, &browseButton, &prevButton, &nextButton, &panicButton, &relinkButton, &routingButton, &settingsButton })
         addAndMakeVisible (b);
 
     kitLabel.setFont (uiFont (19.0f, true));
@@ -101,8 +104,12 @@ KaiaEditor::KaiaEditor (KaiaProcessor& p)
     library.onClose = [this] { showPanel (Panel::PadEditor); };
     library.onChooseFolder = [this] { chooseLibraryFolder(); };
     addChildComponent (library);
+    files.onClose = [this] { showPanel (Panel::PadEditor); };
+    files.onChooseFolder = [this] { chooseFilesFolder(); };
+    addChildComponent (files);
     settingsPanel.onClose = [this] { showPanel (Panel::PadEditor); };
     settingsPanel.onChooseLibraryFolder = [this] { chooseLibraryFolder(); };
+    settingsPanel.onChooseFilesFolder = [this] { chooseFilesFolder(); };
     settingsPanel.onAccentChanged = [this] { accentChanged(); };
     settingsPanel.onPadThemeChanged = [this] { padThemeChanged(); };
     addChildComponent (settingsPanel);
@@ -337,12 +344,15 @@ void KaiaEditor::resized()
     logoLink.setBounds (headerArea.withWidth (kLogoWidth).reduced (12, 10));
     h.removeFromLeft (kLogoWidth - 20);
     auto nav = [&h] (juce::Component& c, int w) { c.setBounds (h.removeFromLeft (w).withSizeKeepingCentre (w, 38)); };
-    nav (openButton, 76);
+    // Tabs; the program arrows sit next to Programs, which they step through
+    nav (openButton, 66);
     h.removeFromLeft (6);
-    nav (browseButton, 92);
+    nav (filesButton, 62);
     h.removeFromLeft (6);
-    nav (libraryButton, 80);
+    nav (libraryButton, 74);
     h.removeFromLeft (6);
+    nav (browseButton, 88);
+    h.removeFromLeft (4);
     nav (prevButton, 34);
     h.removeFromLeft (4);
     nav (nextButton, 34);
@@ -392,6 +402,7 @@ void KaiaEditor::resized()
     padEditor.setBounds (body);
     browser.setBounds (body);
     library.setBounds (body);
+    files.setBounds (body);
     settingsPanel.setBounds (body);
 }
 
@@ -402,9 +413,11 @@ void KaiaEditor::showPanel (Panel panel)
     padEditor.setVisible (panel == Panel::PadEditor);
     browser.setVisible (panel == Panel::Programs);
     library.setVisible (panel == Panel::Library);
+    files.setVisible (panel == Panel::Files);
     settingsPanel.setVisible (panel == Panel::Settings);
     browseButton.setToggleState (panel == Panel::Programs, juce::dontSendNotification);
     libraryButton.setToggleState (panel == Panel::Library, juce::dontSendNotification);
+    filesButton.setToggleState (panel == Panel::Files, juce::dontSendNotification);
     settingsButton.setToggleState (panel == Panel::Settings, juce::dontSendNotification);
 }
 
@@ -422,6 +435,22 @@ void KaiaEditor::chooseLibraryFolder()
         juce::SharedResourcePointer<LibraryService> lib;
         lib->setRoot (dir);
         showPanel (Panel::Library);
+    });
+}
+
+void KaiaEditor::chooseFilesFolder()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose the folder the Files tab starts in", FileBrowser::rootFolder());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                          [this] (const juce::FileChooser& fc)
+    {
+        auto dir = fc.getResult();
+        if (! dir.isDirectory())
+            return;
+        FileBrowser::setRootFolder (dir);
+        settingsPanel.refresh();
+        files.refresh();
+        showPanel (Panel::Files);
     });
 }
 

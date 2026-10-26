@@ -55,6 +55,8 @@ Source/
                             pad colour themes), PadGrid (MPC layout, pad 1 bottom-left, library
                             drop target), PadEditor, ProgramBrowser, LibraryBrowser (TreeView,
                             audition, drag to pads; TileView: pack covers in 2-4 columns),
+                            FileBrowser (Files tab: plain folder tree over setting `filesFolder`,
+                            filter over a background walk), SearchBox (text field + clear "x"),
                             KineticScroller (drag/fling/wheel scrolling on VBlank), SettingsPanel
                             (drum map editor), PluginEditor (header: pack artwork, last MIDI note;
                             the logo is a transparent link to GitHub)
@@ -70,7 +72,8 @@ Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
   UiSnapshot.cpp            KaiaUiSnapshot: renders the real editor to PNG (docs/editor.png; also
-                            library.png/library-tiles.png/settings.png when given a library folder;
+                            library.png/library-tiles.png/files.png/settings.png when given a library
+                            folder, files-filter.png with KAIA_SNAPSHOT_FILTER=<text>;
                             KAIA_SNAPSHOT_PAD_THEMES=1 adds one shot of the pads per colour theme)
 tools/
   make_fonts.py             makes Resources/Fonts/ from Jost[wght].ttf (needs fontTools)
@@ -262,7 +265,16 @@ Product "Kaia", manufacturer code `Kaia`, plugin code `Kai1`, VST3/AU bundle id
   MPC2000XL decay-switch, per-program output routing, MIDI channel filter.
 * Windows/macOS builds are produced by CI but haven't been tried in a host.
 * Drum-module maps: only the TD-10 has been tried with real hardware (by the owner).
-* Library: one root folder; program pads are parsed on the message thread when expanded.
+* Library: one root folder; packs are listed at the top level (presets under a heading above them);
+  opening a pack opens its Programs and Samples groups. Program pads are parsed on the message
+  thread when expanded.
+* Header tabs, in this order: Open, Files, Library, Programs, then `<` `>` (they step Programs).
+* Files tab (`FileBrowser`): never indexed or cached on disk. Folders are listed from disk when
+  opened (folders first, natural order, hidden files skipped; only audio, programs, presets and
+  .xpn shown). The filter walks the whole folder once per showing of the tab on a 1-thread pool
+  (cancellable, capped at 300k files), then matches every word against the file name or its
+  folder path in memory; at most 1000 results, shown as a tree with every folder open. Samples
+  are dragged with the library's `kaiaLibrary: sample` description, so `dropOnPad` handles them.
 * Touch: Linux delivers touch as mouse events, so lists use `ScrollOnDragMode::all`; the library
   (list and tiles) scrolls with `KineticScroller` instead: drag, fling with friction (shared setting
   `flingStrength` 0..1, Settings slider 0-10), wheel glide, all applied once per frame from a

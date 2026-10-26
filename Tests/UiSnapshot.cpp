@@ -1,5 +1,7 @@
 // Renders the real plugin editor to PNG files (for documentation and visual checks).
 // Usage: KaiaUiSnapshot <program/pack/folder> <out dir> [pad index] [library folder]
+// With a library folder it also shows the Files tab over it; KAIA_SNAPSHOT_FILTER=<text> adds a
+// shot of the Files tab filtered by that text (files-filter.png).
 // Set KAIA_CONFIG_DIR to keep it away from your own settings.
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -144,12 +146,11 @@ int main (int argc, char** argv)
         };
         if (auto* tree = findTree (*editor))
             if (auto* rootItem = tree->getRootItem())
-                if (auto* heading = rootItem->getSubItem (rootItem->getNumSubItems() - 1))
-                    if (auto* pack = heading->getSubItem (0))
+                for (int i = 0; i < rootItem->getNumSubItems(); ++i)
+                    if (auto* pack = rootItem->getSubItem (i); pack->getUniqueName().startsWith ("k:"))
                     {
-                        pack->setOpen (true);
-                        for (int i = 0; i < pack->getNumSubItems(); ++i)
-                            pack->getSubItem (i)->setOpen (true);
+                        pack->setOpen (true);       // opens its programs and samples too
+                        break;
                     }
         pump (300);
         save (*editor, outDir.getChildFile ("library.png"));
@@ -202,6 +203,35 @@ int main (int argc, char** argv)
             if (auto* b = findButton (*editor, "List"))
                 b->triggerClick();
             pump (200);
+        }
+
+        // The Files tab over the same folder: the first folder open, then filtered
+        FileBrowser::setRootFolder (libraryDir);
+        click ("Files");
+        if (auto* tree = findTree (*editor))
+            if (auto* rootItem = tree->getRootItem(); rootItem != nullptr && rootItem->getNumSubItems() > 0)
+                rootItem->getSubItem (0)->setOpen (true);
+        pump (300);
+        save (*editor, outDir.getChildFile ("files.png"));
+        if (auto filter = juce::SystemStats::getEnvironmentVariable ("KAIA_SNAPSHOT_FILTER", {}); filter.isNotEmpty())
+        {
+            std::function<SearchBox* (juce::Component&)> findBox = [&findBox] (juce::Component& c) -> SearchBox*
+            {
+                if (auto* box = dynamic_cast<SearchBox*> (&c); box != nullptr && box->getParentComponent()->isVisible())
+                    return box;
+                for (auto* child : c.getChildren())
+                    if (auto* box = findBox (*child))
+                        return box;
+                return nullptr;
+            };
+            if (auto* box = findBox (*editor))
+            {
+                box->setText (filter, true);
+                pump (2000);
+                save (*editor, outDir.getChildFile ("files-filter.png"));
+                box->setText ({}, true);
+                pump (300);
+            }
         }
     }
     click ("Settings");

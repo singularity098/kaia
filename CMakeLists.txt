@@ -77,6 +77,7 @@ set(KAIA_PLUGIN_SOURCES
     Source/UI/ProgramBrowser.cpp
     Source/UI/KineticScroller.cpp
     Source/UI/LibraryBrowser.cpp
+    Source/UI/FileBrowser.cpp
     Source/UI/SettingsPanel.cpp
     Source/UI/PluginEditor.cpp)
 

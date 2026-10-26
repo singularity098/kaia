@@ -23,6 +23,8 @@
 * **Library browser**: point Kaia at the folder with all your expansions and samples, then load
   programs or mix and match single pads and samples from different expansions. Save the result
   as a **preset**; your library files are never modified.
+* **Files browser**: explore any folder on disk as it is, hear samples with a click and drag them
+  onto pads, without adding anything to the library.
 * Real-time safe engine: no locks or memory allocation on the audio thread, every sample in RAM,
   high-quality windowed-sinc resampling. About 4–5% of one 2.1 GHz core for 50 simultaneous voices.
 
@@ -76,6 +78,8 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
 
 ## Using Kaia
 
+* The header's tabs are **Open**, **Files**, **Library** and **Programs**, with `<` `>` next to
+  Programs. Click Files, Library or Programs again (or *Done*) to go back to the pad editor.
 * **Open** a program (.xpm/.pgm), an expansion (.xpn), a folder, or audio files — or drag any of
   them onto the window. Recent files are under *Open → Recent*.
 * **Programs** lists every program in the open expansion or folder; click one or use the arrow
@@ -90,16 +94,23 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   always expose all 17 outputs. If an aux output is switched off in the host, its pads play through
   Main, so nothing goes silent.
 * **Library** (header): set your library folder once (*Folder…* or *Settings*), and Kaia scans it
-  in the background: every `.xpn`, every folder with programs, and every folder of samples. Click
-  a heading, an expansion or its *Programs* / *Samples* to open or close it (the triangle next to a
-  program shows its pads). **Click a program** (or preset) to load it. With *Click to hear* on,
+  in the background: every `.xpn`, every folder with programs, and every folder of samples, listed
+  at the top level. Click an expansion to open it: its *Programs* and *Samples* open with it (click
+  them, or a heading, to close them; the triangle next to a program shows its pads). **Click a program** (or preset) to load it. With *Click to hear* on,
   clicking a sample or pad plays it, again on every click. Double-click a sample or pad to put it
   on the selected pad (named at the bottom of the list), or **drag** it onto any pad
   (hold Shift while dropping a sample to add it as a layer). This is how you mix and match
   sounds from different expansions. The search box searches programs and samples of the whole
-  library. The scan is cached in the config folder, so it's instant next time.
+  library (the **×** at its right clears it, as does Escape). The scan is cached in the config folder, so it's instant next time.
   **Tiles** switches to a cover-art view of your packs (2, 3 or 4 columns; the search box filters
   packs by name). Tap a pack to load it; switch back with **List** and that pack is open there.
+* **Files** (header): a plain file explorer that starts in a folder of your choice (*Folder…* or
+  *Settings → Library → Files tab*; until you choose one it starts in the library folder). It shows
+  folders, samples, programs and expansions as they are on disk; nothing is scanned or added to the
+  library. Click a folder to open it, **click a sample** to hear it, click a program or expansion to
+  load it; double-click a sample or **drag** it onto a pad to use it, as in the Library. The filter
+  box shows only the files whose name or folder path contains every word you type (the **×** clears
+  it); the folder is read again each time you show the tab.
 * **Presets**: *Open → Save preset…* stores the current kit (all pads, layers and settings) in
   Kaia's config folder. Presets appear under *Open → Presets* and at the top of the Library.
   A preset refers to the samples where they are in your library; Kaia never copies, moves or
@@ -168,8 +179,8 @@ Settings, presets and the library index live in one folder:
 * macOS: `~/Library/Application Support/Kaia/`
 * Windows: `%APPDATA%\Kaia\`
 
-`settings.xml` (recent files, library folder, drum module, learned notes, colours, loops,
-library view and fling),
+`settings.xml` (recent files, library and Files tab folders, drum module, learned notes, colours,
+loops, library view and fling),
 `presets/*.kaiapreset`, `drum-maps/*.kaiamap` (your own drum maps), and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
 they are moved automatically. Kaia never writes anywhere else, and in particular never into your
 sample library or expansion files.

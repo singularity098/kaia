@@ -7,7 +7,7 @@ namespace kaia
 {
 
 // Settings shared by all Kaia instances: drum module (trigger map, editable and saveable as custom
-// maps), playback, library folder, highlight and pad colours, and where Kaia keeps its files.
+// maps), playback, library and Files tab folders, highlight and pad colours, and where Kaia keeps its files.
 class SettingsPanel : public juce::Component,
                       private juce::ChangeListener,
                       private juce::Timer
@@ -19,6 +19,7 @@ public:
     void refresh();
     std::function<void()> onClose;
     std::function<void()> onChooseLibraryFolder;
+    std::function<void()> onChooseFilesFolder;
     std::function<void()> onAccentChanged;
     std::function<void()> onPadThemeChanged;
 
@@ -63,6 +64,8 @@ private:
 
     juce::Label libraryPath;
     juce::TextButton chooseLibraryButton { "Choose folder..." }, rescanButton { "Rescan" };
+    juce::Label filesPath;
+    juce::TextButton chooseFilesButton { "Choose folder..." };
     juce::Label flingLabel;
     juce::Slider flingSlider { juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
     std::unique_ptr<Swatches> swatches;

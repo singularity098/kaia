@@ -2,6 +2,7 @@
 
 #include "LookAndFeel.h"
 #include "KineticScroller.h"
+#include "SearchBox.h"
 #include "../PluginProcessor.h"
 
 namespace kaia
@@ -59,7 +60,7 @@ private:
     juce::SharedResourcePointer<LibraryService> library;
     std::shared_ptr<const LibraryIndex> index;
 
-    juce::TextEditor search;
+    SearchBox search;
     juce::TreeView tree;
     std::unique_ptr<RootItem> root;
     juce::TextButton closeButton { "Done" }, rescanButton { "Rescan" }, folderButton { "Folder..." };

@@ -369,8 +369,8 @@ public:
             addSubItem (new GroupItem (browser, index, packIndex, GroupItem::Programs));
         if (! pack().samples.isEmpty())
             addSubItem (new GroupItem (browser, index, packIndex, GroupItem::Samples));
-        if (getNumSubItems() == 1)
-            getSubItem (0)->setOpen (true);
+        for (int i = 0; i < getNumSubItems(); ++i)       // saves a click: programs are usually what's wanted
+            getSubItem (i)->setOpen (true);
     }
 
     void showMenu() override
@@ -441,7 +441,7 @@ public:
 };
 
 //==============================================================================
-// Heading that groups a flat list (presets, library, search results). Headings open by themselves
+// Heading that groups a flat list (presets, search results). Headings open by themselves
 // unless the user closed them; a click opens or closes one on release, like the other items
 // (see LibraryBrowser::mouseUp).
 class LibraryBrowser::HeadingItem : public juce::TreeViewItem
@@ -789,11 +789,7 @@ private:
 LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
 {
     search.setTextToShowWhenEmpty ("Search programs and samples", Colours::textDim);
-    search.setFont (uiFont (14.0f));
-    search.setJustification (juce::Justification::centredLeft);
-    search.setIndents (8, 0);
     search.onTextChange = [this] { rebuildTree(); };
-    search.onEscapeKey = [this] { search.clear(); rebuildTree(); };
     addAndMakeVisible (search);
 
     tree.setRootItemVisible (false);
@@ -920,13 +916,8 @@ void LibraryBrowser::rebuildTree()
                 h->addSubItem (new PresetItem (*this, pr));
             root->addSubItem (h);
         }
-        if (index != nullptr && ! index->packs.empty())
-        {
-            auto* h = new HeadingItem (*this, "Library");
-            for (int i = 0; i < (int) index->packs.size(); ++i)
-                h->addSubItem (new PackItem (*this, index, i));
-            root->addSubItem (h);
-        }
+        for (int i = 0; index != nullptr && i < (int) index->packs.size(); ++i)
+            root->addSubItem (new PackItem (*this, index, i));
     }
     else
     {
@@ -1117,7 +1108,7 @@ void LibraryBrowser::setTileMode (bool shouldShowTiles, bool save)
     {
         if (search.getText().isNotEmpty())
         {
-            search.clear();         // the search results don't show packs
+            search.reset();         // the search results don't show packs
             rebuildTree();
         }
         revealPack (std::exchange (packToReveal, juce::File()));
@@ -1153,26 +1144,22 @@ void LibraryBrowser::revealPack (const juce::File& packFile)
     // The pack in the list (when the search shows it): open, selected and scrolled to
     if (root == nullptr)
         return;
-    for (int h = 0; h < root->getNumSubItems(); ++h)
+    for (int i = 0; i < root->getNumSubItems(); ++i)
     {
-        auto* heading = root->getSubItem (h);
-        for (int i = 0; i < heading->getNumSubItems(); ++i)
+        auto* item = root->getSubItem (i);
+        if (item->getUniqueName() != "k:" + packFile.getFullPathName())
+            continue;
+        item->setOpen (true);
+        item->setSelected (true, true, juce::dontSendNotification);
+        // Positions are worked out asynchronously after opening
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryBrowser> (this), id = item->getItemIdentifierString()]
         {
-            auto* item = heading->getSubItem (i);
-            if (item->getUniqueName() != "k:" + packFile.getFullPathName())
-                continue;
-            item->setOpen (true);
-            item->setSelected (true, true, juce::dontSendNotification);
-            // Positions are worked out asynchronously after opening
-            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryBrowser> (this), id = item->getItemIdentifierString()]
-            {
-                if (safe == nullptr)
-                    return;
-                if (auto* it = safe->tree.findItemFromIdentifierString (id))
-                    safe->scroller->scrollTo (it->getItemPosition (false).getY() - 8);
-            });
-            return;
-        }
+            if (safe == nullptr)
+                return;
+            if (auto* it = safe->tree.findItemFromIdentifierString (id))
+                safe->scroller->scrollTo (it->getItemPosition (false).getY() - 8);
+        });
+        return;
     }
 }
 

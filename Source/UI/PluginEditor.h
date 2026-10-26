@@ -5,6 +5,7 @@
 #include "PadEditor.h"
 #include "ProgramBrowser.h"
 #include "LibraryBrowser.h"
+#include "FileBrowser.h"
 #include "SettingsPanel.h"
 
 namespace kaia
@@ -39,10 +40,11 @@ private:
     void chooseFiles (bool folders);
     void chooseSamplesForPad (int pad, KaiaProcessor::AssignMode mode, int layer);
     void chooseRelinkFolder();
-    enum class Panel { PadEditor, Programs, Library, Settings };
+    enum class Panel { PadEditor, Files, Library, Programs, Settings };
     void showPanel (Panel panel);
     void togglePanel (Panel panel)   { showPanel (currentPanel == panel ? Panel::PadEditor : panel); }
     void chooseLibraryFolder();
+    void chooseFilesFolder();
     void savePresetDialog();
     void accentChanged();
     void addRecent (const juce::File& f);
@@ -56,7 +58,7 @@ private:
 
     juce::TextButton openButton { "Open" }, browseButton { "Programs" }, prevButton { "<" }, nextButton { ">" };
     juce::TextButton panicButton { "Stop" }, relinkButton { "Relink..." }, routingButton { "Outputs" };
-    juce::TextButton libraryButton { "Library" }, settingsButton { "Settings" };
+    juce::TextButton filesButton { "Files" }, libraryButton { "Library" }, settingsButton { "Settings" };
     juce::Label kitLabel, formatLabel, statusLabel, voicesLabel;
     juce::ImageButton coverButton;                 // the open expansion's artwork
     juce::String shownCoverKey;
@@ -68,6 +70,7 @@ private:
     PadEditor padEditor;
     ProgramBrowser browser;
     LibraryBrowser library;
+    FileBrowser files;
     SettingsPanel settingsPanel;
     Panel currentPanel = Panel::PadEditor;
 

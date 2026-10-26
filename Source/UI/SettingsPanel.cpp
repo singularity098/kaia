@@ -1,5 +1,6 @@
 #include "SettingsPanel.h"
 #include "KineticScroller.h"
+#include "FileBrowser.h"
 
 namespace kaia
 {
@@ -266,7 +267,7 @@ SettingsPanel::SettingsPanel (KaiaProcessor& p) : processor (p)
     for (auto* b : { &saveMapButton, &deleteMapButton, &resetMapButton })
         content.addAndMakeVisible (b);
 
-    for (auto* l : { &moduleInfo, &lastNoteLabel, &mapHint, &loopsInfo, &libraryPath, &configPath })
+    for (auto* l : { &moduleInfo, &lastNoteLabel, &mapHint, &loopsInfo, &libraryPath, &filesPath, &configPath })
     {
         l->setFont (uiFont (13.0f));
         l->setColour (juce::Label::textColourId, Colours::textDim);
@@ -294,6 +295,9 @@ SettingsPanel::SettingsPanel (KaiaProcessor& p) : processor (p)
     rescanButton.onClick = [this] { library->rescan(); };
     content.addAndMakeVisible (chooseLibraryButton);
     content.addAndMakeVisible (rescanButton);
+    chooseFilesButton.setTooltip ("Choose the folder the Files tab starts in");
+    chooseFilesButton.onClick = [this] { if (onChooseFilesFolder) onChooseFilesFolder(); };
+    content.addAndMakeVisible (chooseFilesButton);
 
     flingLabel.setText ("Touch scrolling fling", juce::dontSendNotification);
     flingLabel.setFont (uiFont (13.0f));
@@ -628,6 +632,8 @@ void SettingsPanel::refresh()
                          + "\nKaia only reads from the library: files there are never changed.",
                          juce::dontSendNotification);
     rescanButton.setEnabled (root != juce::File());
+    filesPath.setText ("Files tab: " + FileBrowser::rootFolder().getFullPathName()
+                       + "\nA plain view of a folder on disk, not scanned into the library.", juce::dontSendNotification);
     flingSlider.setValue (std::round (KineticScroller::flingFromSettings() * 10.0f), juce::dontSendNotification);
 
     configPath.setText ("Settings and presets: " + UserFiles::configDirectory().getFullPathName()
@@ -693,6 +699,11 @@ void SettingsPanel::resized()
     chooseLibraryButton.setBounds (libButtons.removeFromLeft (130));
     libButtons.removeFromLeft (6);
     rescanButton.setBounds (libButtons.removeFromLeft (80));
+    y += 10;
+    auto filesRow = row (40);
+    chooseFilesButton.setBounds (filesRow.removeFromRight (130).withHeight (26));
+    filesRow.removeFromRight (8);
+    filesPath.setBounds (filesRow);
     y += 8;
     auto flingRow = row (26);
     flingLabel.setBounds (flingRow.removeFromLeft (160));
