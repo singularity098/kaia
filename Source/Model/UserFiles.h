@@ -2,6 +2,7 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 #include "Kit.h"
+#include <set>
 
 namespace kaia
 {
@@ -19,6 +20,7 @@ namespace UserFiles
     juce::File presetsDirectory();      // presets/
     juce::File libraryCacheFile();      // library-index.xml
     juce::File drumMapsDirectory();     // drum-maps/ (custom drum module maps)
+    juce::File favouritesFile();        // favourites.txt (library programs and samples)
 
     // A file name made from something the user typed (never empty, no path separators)
     juce::String safeFileName (const juce::String& name);
@@ -65,6 +67,14 @@ namespace Presets
     bool load (const juce::File& file, Kit& kit, juce::String& error);
     bool remove (const juce::File& file);                  // only deletes files inside the presets folder
     bool isPresetFile (const juce::File& file);
+}
+
+// Programs and samples starred in the library, one key per line in favourites.txt. Keys are made
+// by the library browser (kind, pack file and path inside the pack); this only stores them.
+namespace Favourites
+{
+    std::set<juce::String> load();
+    bool save (const std::set<juce::String>& keys);
 }
 
 }

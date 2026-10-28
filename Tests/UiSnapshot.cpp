@@ -191,6 +191,16 @@ int main (int argc, char** argv)
                         return b;
             return nullptr;
         };
+        // The favourites filter (stars come from favourites.txt in the config folder)
+        if (auto* favourites = findButton (*editor, "Favourites"))
+        {
+            favourites->triggerClick();
+            pump (200);
+            save (*editor, outDir.getChildFile ("library-favourites.png"));
+            favourites->triggerClick();
+            pump (200);
+        }
+
         if (auto* tilesButton = findButton (*editor, "Tiles"))
         {
             tilesButton->triggerClick();

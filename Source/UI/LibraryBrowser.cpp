@@ -3,6 +3,17 @@
 namespace kaia
 {
 
+namespace
+{
+    juce::Path starShape (juce::Rectangle<float> r)
+    {
+        juce::Path p;
+        auto size = juce::jmin (r.getWidth(), r.getHeight());
+        p.addStar (r.getCentre().translated (0.0f, size * 0.04f), 5, size * 0.22f, size * 0.5f);
+        return p;
+    }
+}
+
 //==============================================================================
 class LibraryBrowser::Item : public juce::TreeViewItem
 {
@@ -10,6 +21,68 @@ public:
     explicit Item (LibraryBrowser& b) : browser (b) {}
 
     int getItemHeight() const override { return 36; }
+
+    // Buttons at the right end of a row: the favourite star (rightmost), then the preview button
+    enum Button { noButton, starButton, previewButton };
+    static constexpr int kButtonWidth = 32;
+
+    virtual juce::String favouriteKey() const { return {}; }    // empty: can't be starred
+    virtual bool hasPreview()                 { return false; }
+    virtual bool isPreviewPlaying() const     { return false; }
+    virtual void buttonClicked (Button)       {}
+
+    Button buttonAt (int x)
+    {
+        auto right = getItemPosition (false).getWidth();
+        if (favouriteKey().isNotEmpty())
+        {
+            if (x >= right - kButtonWidth)
+                return starButton;
+            right -= kButtonWidth;
+        }
+        return hasPreview() && x >= right - kButtonWidth && x < right ? previewButton : noButton;
+    }
+
+    void paintButtons (juce::Graphics& g, juce::Rectangle<int>& r)
+    {
+        if (auto key = favouriteKey(); key.isNotEmpty())
+        {
+            auto star = starShape (r.removeFromRight (kButtonWidth).toFloat().withSizeKeepingCentre (18.0f, 18.0f));
+            if (browser.isFavourite (key))
+            {
+                g.setColour (Colours::accent);
+                g.fillPath (star);
+            }
+            else
+            {
+                g.setColour (Colours::textDim.withAlpha (0.5f));
+                g.strokePath (star, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved));
+            }
+        }
+        if (hasPreview())
+        {
+            // Play turns into stop in the same place, so a second click there stops it
+            auto circle = r.removeFromRight (kButtonWidth).toFloat().withSizeKeepingCentre (22.0f, 22.0f);
+            juce::Path symbol;
+            auto c = circle.getCentre();
+            if (isPreviewPlaying())
+            {
+                g.setColour (Colours::accent);
+                g.fillEllipse (circle);
+                symbol.addRectangle (juce::Rectangle<float> (8.0f, 8.0f).withCentre (c));
+                g.setColour (Colours::panel);
+            }
+            else
+            {
+                g.setColour (Colours::textDim);
+                g.drawEllipse (circle.reduced (0.6f), 1.2f);
+                symbol.addTriangle (c.x - 3.0f, c.y - 5.0f, c.x - 3.0f, c.y + 5.0f, c.x + 5.0f, c.y);
+                g.setColour (Colours::text);
+            }
+            g.fillPath (symbol);
+            r.removeFromRight (4);
+        }
+    }
 
     void paintItem (juce::Graphics& g, int width, int height) override
     {
@@ -32,6 +105,7 @@ public:
         }
 
         auto r = area.reduced (4, 0);
+        paintButtons (g, r);
         if (detail.isNotEmpty())
         {
             g.setColour (Colours::textDim);
@@ -51,10 +125,17 @@ public:
         if (e.mods.isPopupMenu())
             showMenu();
         else
+        {
             browser.pendingClick = getItemIdentifierString();
+            browser.pendingButton = buttonAt (e.x);
+        }
     }
 
-    void itemDoubleClicked (const juce::MouseEvent&) override { activate(); }
+    void itemDoubleClicked (const juce::MouseEvent& e) override
+    {
+        if (buttonAt (e.x) == noButton)     // a second click on a button is just another click
+            activate();
+    }
 
     virtual juce::String getText() const = 0;
     virtual juce::String getDetail() const   { return {}; }
@@ -69,7 +150,10 @@ public:
     void playIfWanted()
     {
         if (browser.autoPreview.getToggleState())
+        {
+            browser.previewKey.clear();     // cuts a program preview
             audition();
+        }
     }
 
     void itemSelectionChanged (bool nowSelected) override
@@ -110,6 +194,8 @@ public:
     juce::String getDetail() const override { return withPack ? pack().title : juce::String(); }
     bool mightContainSubItems() override    { return false; }
     juce::String getUniqueName() const override { return "s:" + ref().toString(); }
+    juce::String favouriteKey() const override  { return LibraryBrowser::favouriteKey ("sample", pack(), pack().samples[sampleIndex]); }
+    void buttonClicked (Button) override        { browser.toggleFavourite (favouriteKey()); }
 
     juce::var getDragSourceDescription() override
     {
@@ -225,6 +311,23 @@ public:
     juce::String getDetail() const override  { return withPack ? pack().title : juce::String(); }
     bool mightContainSubItems() override     { return true; }
     juce::String getUniqueName() const override { return "g:" + location().toString(); }
+    juce::String favouriteKey() const override  { return LibraryBrowser::favouriteKey ("program", pack(), pack().programs[programIndex]); }
+    bool isPreviewPlaying() const override      { return browser.previewKey == getUniqueName(); }
+
+    bool hasPreview() override
+    {
+        if (previewSample == -2)
+            previewSample = browser.previewSampleFor (packIndex, programIndex);
+        return previewSample >= 0;
+    }
+
+    void buttonClicked (Button b) override
+    {
+        if (b == previewButton && hasPreview())
+            browser.togglePreview (getUniqueName(), pack().sampleRef (previewSample));
+        else if (b == starButton)
+            browser.toggleFavourite (favouriteKey());
+    }
 
     void itemOpennessChanged (bool isNowOpen) override
     {
@@ -247,10 +350,13 @@ public:
         juce::PopupMenu m;
         m.addItem (1, "Load program");
         m.addItem (2, "Show pads");
+        if (hasPreview())
+            m.addItem (3, isPreviewPlaying() ? "Stop preview" : "Play preview");
         m.showMenuAsync (juce::PopupMenu::Options(), [this] (int r)
         {
             if (r == 1) activate();
             if (r == 2) setOpen (true);
+            if (r == 3) buttonClicked (previewButton);
         });
     }
 
@@ -258,6 +364,7 @@ private:
     std::shared_ptr<const LibraryIndex> index;
     int packIndex, programIndex;
     bool withPack;
+    int previewSample = -2;     // -2: not looked up yet
 };
 
 //==============================================================================
@@ -441,8 +548,8 @@ public:
 };
 
 //==============================================================================
-// Heading that groups a flat list (presets, search results). Headings open by themselves
-// unless the user closed them; a click opens or closes one on release, like the other items
+// Heading that groups a flat list (presets, search results). Result headings open by themselves,
+// "My presets" starts closed; what the user chose is kept across rebuilds. A click opens or closes one on release, like the other items
 // (see LibraryBrowser::mouseUp).
 class LibraryBrowser::HeadingItem : public juce::TreeViewItem
 {
@@ -462,10 +569,7 @@ public:
 
     void itemOpennessChanged (bool isNowOpen) override
     {
-        if (isNowOpen)
-            browser.closedHeadings.erase (text);
-        else
-            browser.closedHeadings.insert (text);
+        browser.headingOpen[text] = isNowOpen;
     }
 
     void paintItem (juce::Graphics& g, int width, int height) override
@@ -832,6 +936,26 @@ LibraryBrowser::LibraryBrowser (KaiaProcessor& p) : processor (p)
     for (auto* b : { &closeButton, &rescanButton, &folderButton })
         addAndMakeVisible (b);
 
+    favouritesButton.setShape (starShape ({ 0.0f, 0.0f, 20.0f, 20.0f }), false, true, false);
+    favouritesButton.setOutline (Colours::textDim, 1.3f);
+    favouritesButton.setColours (juce::Colours::transparentBlack, Colours::textDim.withAlpha (0.3f), Colours::accent.withAlpha (0.5f));
+    favouritesButton.setOnColours (Colours::accent, Colours::accent.brighter (0.2f), Colours::accent.withAlpha (0.5f));
+    favouritesButton.shouldUseOnColours (true);
+    favouritesButton.setBorderSize (juce::BorderSize<int> (4));
+    favouritesButton.setTooltip ("Show only your favourites (star programs and samples to add them)");
+    favouritesButton.onClick = [this] { setFavouritesOnly (! favouritesOnly); };
+    addAndMakeVisible (favouritesButton);
+    collapseButton.setTooltip ("Open or close every pack in the list");
+    collapseButton.onClick = [this]
+    {
+        bool anyOpen = false;
+        for (int i = 0; root != nullptr && i < root->getNumSubItems(); ++i)
+            anyOpen = anyOpen || root->getSubItem (i)->isOpen();
+        setAllOpen (! anyOpen);
+    };
+    addAndMakeVisible (collapseButton);
+    favourites = Favourites::load();
+
     autoPreview.setToggleState (true, juce::dontSendNotification);
     autoPreview.setTooltip ("Play samples and pads when you select them");
     addAndMakeVisible (autoPreview);
@@ -879,6 +1003,7 @@ void LibraryBrowser::visibilityChanged()
     {
         stopTimer();
         processor.stopPreview();
+        previewKey.clear();
     }
 }
 
@@ -894,6 +1019,8 @@ void LibraryBrowser::refresh()
 {
     index = library->getIndex();
     parsedPrograms.clear();
+    previewSamples.clear();
+    favourites = Favourites::load();      // another instance may have changed them
     rebuildTree();
     repaint();
 }
@@ -907,7 +1034,7 @@ void LibraryBrowser::rebuildTree()
     auto filter = search.getText().trim();
     auto presets = Presets::list();
 
-    if (filter.isEmpty())
+    if (filter.isEmpty() && ! favouritesOnly)
     {
         if (! presets.empty())
         {
@@ -921,7 +1048,8 @@ void LibraryBrowser::rebuildTree()
     }
     else
     {
-        // Flat search results: every word must match (name, pack title or folder)
+        // Flat search results: every word must match (name, pack title or folder); with the
+        // favourites filter on, only starred programs and samples
         auto words = juce::StringArray::fromTokens (filter, " ", "\"");
         words.removeEmptyStrings();
         auto matches = [&words] (const juce::String& a, const juce::String& b)
@@ -933,9 +1061,14 @@ void LibraryBrowser::rebuildTree()
         };
 
         constexpr int kMaxResults = 400;
+        auto starred = [this] (const char* kind, const LibraryPack& pack, const juce::String& path)
+        {
+            return ! favouritesOnly || favourites.count (favouriteKey (kind, pack, path)) > 0;
+        };
+
         auto* presetHeading = new HeadingItem (*this, "Presets");
         for (auto& pr : presets)
-            if (matches (pr.name, {}))
+            if (! favouritesOnly && matches (pr.name, {}))
                 presetHeading->addSubItem (new PresetItem (*this, pr));
 
         auto* programHeading = new HeadingItem (*this, "Programs");
@@ -946,10 +1079,10 @@ void LibraryBrowser::rebuildTree()
             {
                 auto& pack = index->packs[(size_t) pi];
                 for (int i = 0; i < pack.programs.size() && programHeading->getNumSubItems() < kMaxResults; ++i)
-                    if (matches (pack.programs[i], pack.title))
+                    if (matches (pack.programs[i], pack.title) && starred ("program", pack, pack.programs[i]))
                         programHeading->addSubItem (new ProgramItem (*this, index, pi, i, true));
                 for (int i = 0; i < pack.samples.size() && sampleHeading->getNumSubItems() < kMaxResults; ++i)
-                    if (matches (pack.samples[i], pack.title))
+                    if (matches (pack.samples[i], pack.title) && starred ("sample", pack, pack.samples[i]))
                         sampleHeading->addSubItem (new SampleItem (*this, index, pi, i, true));
             }
         }
@@ -967,11 +1100,14 @@ void LibraryBrowser::rebuildTree()
 
     tree.setRootItem (root.get());
     root->setOpen (true);
-    if (openness != nullptr && filter.isEmpty())
+    if (openness != nullptr && filter.isEmpty() && ! favouritesOnly)
         tree.restoreOpennessState (*openness, true);
     for (int i = 0; i < root->getNumSubItems(); ++i)
         if (auto* h = dynamic_cast<HeadingItem*> (root->getSubItem (i)))
-            h->setOpen (closedHeadings.count (h->text) == 0);
+        {
+            auto it = headingOpen.find (h->text);
+            h->setOpen (it != headingOpen.end() ? it->second : h->text != "My presets");
+        }
 
     // Tiles: every pack whose title or path matches all the words
     {
@@ -1000,6 +1136,9 @@ void LibraryBrowser::updateHint()
     juce::String text;
     if (library->getRoot() == juce::File())
         text = "Choose your library folder (Folder...) to browse all your expansions and samples here.";
+    else if (favouritesOnly && ! tileMode && root != nullptr && root->getNumSubItems() == 0)
+        text = filter.isEmpty() ? "No favourites yet: click the star next to a program or sample to add it."
+                                : "No favourite matches \"" + filter + "\".";
     else if (filter.isNotEmpty() && (tileMode ? tiles->isEmpty() : (root != nullptr && root->getNumSubItems() == 0)))
         text = "Nothing matches \"" + filter + "\".";
     else if (tileMode)
@@ -1073,6 +1212,13 @@ void LibraryBrowser::resized()
     for (auto* b : columnButtons)
         b->setBounds (columnsArea.removeFromLeft (34));
     row.removeFromRight (8);
+    if (! tileMode)
+    {
+        collapseButton.setBounds (row.removeFromRight (96).withSizeKeepingCentre (96, 26));
+        row.removeFromRight (6);
+        favouritesButton.setBounds (row.removeFromRight (30));
+        row.removeFromRight (6);
+    }
     search.setBounds (row);
     r.removeFromTop (6);
     hint.setBounds (r.removeFromBottom (20));
@@ -1092,9 +1238,12 @@ void LibraryBrowser::setTileMode (bool shouldShowTiles, bool save)
     tree.setVisible (! tileMode);
     scrollBar.setVisible (! tileMode);
     autoPreview.setVisible (! tileMode);
+    favouritesButton.setVisible (! tileMode);
+    collapseButton.setVisible (! tileMode);
+    resized();
     for (auto* b : columnButtons)
         b->setVisible (tileMode);
-    search.setTextToShowWhenEmpty (tileMode ? "Search packs" : "Search programs and samples", Colours::textDim);
+    search.setTextToShowWhenEmpty (tileMode ? "Search packs" : favouritesOnly ? "Search favourites" : "Search programs and samples", Colours::textDim);
     scroller->stop();
 
     if (save)
@@ -1106,9 +1255,10 @@ void LibraryBrowser::setTileMode (bool shouldShowTiles, bool save)
     }
     if (! tileMode && packToReveal != juce::File())
     {
-        if (search.getText().isNotEmpty())
+        if (search.getText().isNotEmpty() || favouritesOnly)
         {
             search.reset();         // the search results don't show packs
+            setFavouritesOnly (false);
             rebuildTree();
         }
         revealPack (std::exchange (packToReveal, juce::File()));
@@ -1168,14 +1318,21 @@ void LibraryBrowser::mouseUp (const juce::MouseEvent& e)
 {
     // Single clicks act on release; the second click of a double-click is left to itemDoubleClicked,
     // and the end of a scroll (or a touch that stopped one) does nothing
+    // (a row button takes every click, so play / stop can be clicked quickly in turn)
     auto pending = std::exchange (pendingClick, juce::String());
+    auto button = (Item::Button) std::exchange (pendingButton, 0);
     if (pending.isEmpty() || scroller->pressIsScrolling() || e.getDistanceFromDragStart() >= 12
-        || e.getNumberOfClicks() > 1)
+        || (e.getNumberOfClicks() > 1 && button == Item::noButton))
         return;
     if (auto* treeItem = tree.findItemFromIdentifierString (pending))
     {
         if (auto* item = dynamic_cast<Item*> (treeItem))
-            item->clicked();
+        {
+            if (button != Item::noButton)
+                item->buttonClicked (button);
+            else
+                item->clicked();
+        }
         else
             treeItem->setOpen (! treeItem->isOpen());     // HeadingItem
     }
@@ -1194,6 +1351,137 @@ void LibraryBrowser::timerCallback()
     }
     if (processor.selectedPad != hintPad)
         updateHint();      // a pad was picked on the pad grid
+    updatePreviewState();
+
+    bool anyOpen = false;
+    for (int i = 0; root != nullptr && i < root->getNumSubItems(); ++i)
+        anyOpen = anyOpen || root->getSubItem (i)->isOpen();
+    collapseButton.setButtonText (anyOpen ? "Collapse all" : "Expand all");
+}
+
+//==============================================================================
+void LibraryBrowser::setAllOpen (bool open)
+{
+    if (root == nullptr)
+        return;
+
+    // Closing closes everything below as well, except the Programs / Samples headings of a pack,
+    // so opening a pack again shows its programs straight away
+    std::function<void (juce::TreeViewItem&)> closeAll = [&] (juce::TreeViewItem& item)
+    {
+        for (int i = 0; i < item.getNumSubItems(); ++i)
+            closeAll (*item.getSubItem (i));
+        auto* it = dynamic_cast<Item*> (&item);
+        if (it == nullptr || ! it->isHeading())
+            item.setOpen (false);
+    };
+
+    for (int i = 0; i < root->getNumSubItems(); ++i)
+    {
+        auto* item = root->getSubItem (i);
+        if (! open)
+            closeAll (*item);
+        else if (item->mightContainSubItems())
+            item->setOpen (true);       // a pack opens its Programs and Samples headings itself
+    }
+    scroller->syncScrollBar();
+}
+
+void LibraryBrowser::setFavouritesOnly (bool only)
+{
+    favouritesOnly = only;
+    favouritesButton.setToggleState (only, juce::dontSendNotification);
+    search.setTextToShowWhenEmpty (tileMode ? "Search packs" : only ? "Search favourites" : "Search programs and samples", Colours::textDim);
+    rebuildTree();
+}
+
+juce::String LibraryBrowser::favouriteKey (const char* kind, const LibraryPack& pack, const juce::String& path)
+{
+    return juce::String (kind) + "\t" + pack.file.getFullPathName() + "\t" + path;
+}
+
+void LibraryBrowser::toggleFavourite (const juce::String& key)
+{
+    favourites = Favourites::load();      // keeps what another instance added meanwhile
+    if (! favourites.erase (key))
+        favourites.insert (key);
+    Favourites::save (favourites);
+    tree.repaint();
+    if (favouritesOnly)       // the item may go: rebuild once its click has been handled
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<LibraryBrowser> (this)]
+        {
+            if (safe != nullptr)
+                safe->rebuildTree();
+        });
+}
+
+int LibraryBrowser::previewSampleFor (int packIndex, int programIndex)
+{
+    // MPC expansions ship a render of each program as "[Previews]/<program>.xpm.wav"
+    // (sometimes without the .xpm, or in a "Previews" folder)
+    if (index == nullptr || packIndex < 0 || packIndex >= (int) index->packs.size())
+        return -1;
+    auto& pack = index->packs[(size_t) packIndex];
+    auto it = previewSamples.find (packIndex);
+    if (it == previewSamples.end())
+    {
+        std::map<juce::String, int> names;
+        for (int i = 0; i < pack.samples.size(); ++i)
+        {
+            auto& path = pack.samples.getReference (i);
+            if (! LibraryPack::folderOf (path).containsIgnoreCase ("previews"))
+                continue;
+            auto name = LibraryPack::displayName (path);
+            if (isProgramFileName (name))
+                name = name.upToLastOccurrenceOf (".", false, false);
+            names.emplace (name.toLowerCase(), i);
+        }
+        it = previewSamples.emplace (packIndex, std::move (names)).first;
+    }
+    auto found = it->second.find (LibraryPack::displayName (pack.programs[programIndex]).toLowerCase());
+    return found != it->second.end() ? found->second : -1;
+}
+
+void LibraryBrowser::togglePreview (const juce::String& key, const SampleRef& preview)
+{
+    if (previewKey == key)
+    {
+        processor.stopPreview();
+        previewKey.clear();
+    }
+    else
+    {
+        previewKey = key;
+        previewIdAtClick = processor.getEngine().getSoundingPreview();
+        previewSoundId = 0;
+        previewClickTime = juce::Time::getMillisecondCounter();
+        processor.previewSample (preview);
+    }
+    tree.repaint();
+}
+
+void LibraryBrowser::updatePreviewState()
+{
+    // The stop button stays until the preview has finished (or another sound replaced it)
+    if (previewKey.isEmpty())
+        return;
+    auto sounding = processor.getEngine().getSoundingPreview();
+    bool finished = false;
+    if (previewSoundId == 0)
+    {
+        if (sounding != 0 && sounding != previewIdAtClick)
+            previewSoundId = sounding;
+        else
+            finished = juce::Time::getMillisecondCounter() - previewClickTime > 5000;   // never started
+    }
+    else
+        finished = sounding != previewSoundId;
+
+    if (finished)
+    {
+        previewKey.clear();
+        tree.repaint();
+    }
 }
 
 void LibraryBrowser::paint (juce::Graphics& g)

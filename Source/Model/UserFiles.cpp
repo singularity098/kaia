@@ -28,6 +28,7 @@ juce::File UserFiles::settingsFile()       { return configDirectory().getChildFi
 juce::File UserFiles::presetsDirectory()   { return configDirectory().getChildFile ("presets"); }
 juce::File UserFiles::libraryCacheFile()   { return configDirectory().getChildFile ("library-index.xml"); }
 juce::File UserFiles::drumMapsDirectory()  { return configDirectory().getChildFile ("drum-maps"); }
+juce::File UserFiles::favouritesFile()     { return configDirectory().getChildFile ("favourites.txt"); }
 
 bool UserFiles::isInsideConfigDirectory (const juce::File& f)
 {
@@ -190,6 +191,28 @@ bool Presets::remove (const juce::File& file)
     if (! isPresetFile (file) || ! file.isAChildOf (UserFiles::presetsDirectory()))
         return false;
     return file.deleteFile();
+}
+
+//==============================================================================
+std::set<juce::String> Favourites::load()
+{
+    std::set<juce::String> keys;
+    juce::StringArray lines;
+    UserFiles::favouritesFile().readLines (lines);
+    for (auto& l : lines)
+        if (l.trim().isNotEmpty())
+            keys.insert (l);
+    return keys;
+}
+
+bool Favourites::save (const std::set<juce::String>& keys)
+{
+    juce::StringArray lines;
+    for (auto& k : keys)
+        lines.add (k);
+    auto file = UserFiles::favouritesFile();
+    file.getParentDirectory().createDirectory();
+    return file.replaceWithText (lines.joinIntoString ("\n") + (lines.isEmpty() ? "" : "\n"), false, false, "\n");
 }
 
 }

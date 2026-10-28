@@ -528,6 +528,7 @@ void SamplerEngine::playPreview()
 
     if (auto* v = allocateVoice())
         startVoice (*v, pad, pad.layers[(size_t) layer], kPreviewPad, -1, -1, velocity);
+    playingPreview = current->previewId;
 }
 
 void SamplerEngine::startVoice (Voice& v, const PadRT& pad, const LayerRT& layer, int padIndex, int note, int inputNote, int velocity)
@@ -828,6 +829,7 @@ void SamplerEngine::process (const OutputBus* outputs, int numSamples, const juc
     // Feedback for the UI
     int perPad[kMaxPads] = {};
     int active = 0;
+    bool previewSounding = false;
     for (auto& v : voices)
     {
         if (! v.active)
@@ -835,11 +837,13 @@ void SamplerEngine::process (const OutputBus* outputs, int numSamples, const juc
         ++active;
         if (v.padIndex >= 0 && v.padIndex < kMaxPads && ! v.killing)
             ++perPad[v.padIndex];
+        previewSounding = previewSounding || (v.padIndex == kPreviewPad && ! v.killing);
     }
     for (int i = 0; i < kMaxPads; ++i)
         if (padVoices[(size_t) i].load (std::memory_order_relaxed) != perPad[i])
             padVoices[(size_t) i].store (perPad[i], std::memory_order_relaxed);
     activeVoiceCount.store (active, std::memory_order_relaxed);
+    soundingPreview.store (previewSounding ? playingPreview : 0, std::memory_order_relaxed);
 }
 
 }

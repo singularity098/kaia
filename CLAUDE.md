@@ -32,7 +32,8 @@ Source/
                             editable note table + custom maps (drum-maps/*.kaiamap), learned notes;
                             resolve() = which pads each MIDI note plays
   Model/UserFiles           config folder (XDG on Linux, KAIA_CONFIG_DIR override, legacy
-                            ~/Kaia migration), SharedSettings (PropertiesFile), Presets, drum-maps/
+                            ~/Kaia migration), SharedSettings (PropertiesFile), Presets, drum-maps/,
+                            Favourites (favourites.txt)
   Formats/
     ZipReader               own zip reader: stored + deflate, Zip64, detects encryption (never decrypts)
     SampleSource            audio decoding (JUCE formats + .SND), SampleIndex (find samples by name),
@@ -72,7 +73,8 @@ Tests/
   TestMain.cpp              KaiaTests: synthetic fixtures for every format + engine/audio assertions
   HostTest.cpp              KaiaHostTest: loads the *built* VST3/LV2 binary like a DAW and checks audio
   UiSnapshot.cpp            KaiaUiSnapshot: renders the real editor to PNG (docs/editor.png; also
-                            library.png/library-tiles.png/files.png/settings.png when given a library
+                            library.png/library-favourites.png/library-tiles.png/files.png/settings.png
+                            when given a library
                             folder, files-filter.png with KAIA_SNAPSHOT_FILTER=<text>;
                             KAIA_SNAPSHOT_PAD_THEMES=1 adds one shot of the pads per colour theme)
 tools/
@@ -267,7 +269,18 @@ Product "Kaia", manufacturer code `Kaia`, plugin code `Kai1`, VST3/AU bundle id
 * Drum-module maps: only the TD-10 has been tried with real hardware (by the owner).
 * Library: one root folder; packs are listed at the top level (presets under a heading above them);
   opening a pack opens its Programs and Samples groups. Program pads are parsed on the message
-  thread when expanded.
+  thread when expanded. The list starts fully collapsed ("My presets" too; result headings open);
+  Expand/Collapse all opens packs (not programs) / closes everything but a pack's group headings.
+* Library favourites: star buttons on program and sample rows; keys are
+  `program|sample <TAB> pack file <TAB> path in pack`, one per line in `favourites.txt` (re-read
+  before every change, so instances don't overwrite each other). The star filter shows them as
+  flat Programs/Samples results (combined with the search words).
+* Program previews: a sample in a pack folder whose path contains "previews" (`[Previews]/Kit.xpm.wav`
+  or `Kit.wav`) belongs to the program of the same name. Row buttons are hit-tested in
+  `Item::buttonAt` and act on mouse-up like other clicks, but also on the second click of a
+  double-click, so play/stop can be clicked quickly. The stop state lasts while
+  `SamplerEngine::getSoundingPreview()` reports the preview's id (set by the audio thread from its
+  voice scan, no extra work per sample).
 * Header tabs, in this order: Open, Files, Library, Programs, then `<` `>` (they step Programs).
 * Files tab (`FileBrowser`): never indexed or cached on disk. Folders are listed from disk when
   opened (folders first, natural order, hidden files skipped; only audio, programs, presets and

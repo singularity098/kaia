@@ -52,6 +52,7 @@ public:
     juce::uint32 getPadHitCount (int pad) const noexcept { return pad >= 0 && pad < kMaxPads ? padHits[(size_t) pad].load (std::memory_order_relaxed) : 0; }
     int getPadVoiceCount (int pad) const noexcept      { return pad >= 0 && pad < kMaxPads ? padVoices[(size_t) pad].load (std::memory_order_relaxed) : 0; }
     juce::uint32 getLastHitPad() const noexcept        { return lastHitPad.load (std::memory_order_relaxed); }
+    juce::uint32 getSoundingPreview() const noexcept   { return soundingPreview.load (std::memory_order_relaxed); }   // preview id, 0 if silent
 
     // Last MIDI note-on received from the host: (sequence << 8) | note, 0 if none yet. For MIDI Learn.
     juce::uint32 getLastInputNote() const noexcept     { return lastInputNote.load (std::memory_order_relaxed); }
@@ -152,12 +153,14 @@ private:
     float pitchBendSemis = 0.0f;
     std::atomic<bool> panicRequested { false };
     juce::uint32 pendingPreview = 0;          // audio thread: preview waiting for its snapshot
+    juce::uint32 playingPreview = 0;          // audio thread: id of the last preview started
     juce::uint32 inputNoteSequence = 0;
     juce::uint64 eventFirstSerial = 0;        // voices started by the current note event have serials above this
 
     std::array<std::atomic<juce::uint32>, kMaxPads> padHits {};
     std::array<std::atomic<int>, kMaxPads> padVoices {};
     std::atomic<int> activeVoiceCount { 0 };
+    std::atomic<juce::uint32> soundingPreview { 0 };
     std::atomic<juce::uint32> lastHitPad { 0 };
     std::atomic<juce::uint32> lastInputNote { 0 };
     std::atomic<int> lastInputVelocity { 0 };

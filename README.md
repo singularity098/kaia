@@ -102,6 +102,12 @@ JUCE 8 and the CLAP extensions are downloaded automatically during the first con
   (hold Shift while dropping a sample to add it as a layer). This is how you mix and match
   sounds from different expansions. The search box searches programs and samples of the whole
   library (the **×** at its right clears it, as does Escape). The scan is cached in the config folder, so it's instant next time.
+  The list starts fully collapsed; **Expand all** / **Collapse all** next to the search box opens
+  or closes every pack. Click the **☆** at the right of a program or sample to make it a
+  favourite, and the **☆** next to the search box to list only your favourites (the search then
+  searches them). Programs that come with a preview render (MPC expansions keep them in
+  `[Previews]`) get a **▶** button that plays it; while it plays the button becomes **■** in the same
+  place, so a second click stops it.
   **Tiles** switches to a cover-art view of your packs (2, 3 or 4 columns; the search box filters
   packs by name). Tap a pack to load it; switch back with **List** and that pack is open there.
 * **Files** (header): a plain file explorer that starts in a folder of your choice (*Folder…* or
@@ -181,7 +187,8 @@ Settings, presets and the library index live in one folder:
 
 `settings.xml` (recent files, library and Files tab folders, drum module, learned notes, colours,
 loops, library view and fling),
-`presets/*.kaiapreset`, `drum-maps/*.kaiamap` (your own drum maps), and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
+`presets/*.kaiapreset`, `drum-maps/*.kaiamap` (your own drum maps), `favourites.txt` (starred
+library programs and samples) and `library-index.xml`. Kaia 1.0 kept its settings in `~/Kaia/`;
 they are moved automatically. Kaia never writes anywhere else, and in particular never into your
 sample library or expansion files.
 

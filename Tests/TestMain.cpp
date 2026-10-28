@@ -1405,10 +1405,12 @@ static void testPreview()
     CHECK (std::abs (freqAt (out, 500) - 700.0) < 4, "preview plays once its snapshot is active (" << freqAt (out, 500) << " Hz)");
     CHECK (trackedAllocations.load() == 0, "no allocations while previewing");
     CHECK (engine.getPadHitCount (0) == hits, "previews don't count as pad hits");
+    CHECK (engine.getSoundingPreview() == 7, "the sounding preview is reported (library play/stop button)");
 
     engine.stopPreview();
     out = render (engine, {}, 0.2, 44100.0);
     CHECK (rms (out.get (0, 0), 2000, 4000) < 1.0e-6, "stopPreview silences it");
+    CHECK (engine.getSoundingPreview() == 0, "no preview reported after stopPreview");
 
     // A stale preview id never plays
     engine.startPreview (3);
